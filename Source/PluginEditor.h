@@ -1,7 +1,10 @@
 /*
   ==============================================================================
 
-    This file contains the basic framework code for a JUCE plugin editor.
+    PluginEditor.h
+    Composes the panel components (SpectrumDisplay, LevelMetersPanel,
+    LatencyPanel) and the analysis-mode selector. Manages the responsive
+    scale factor and propagates it to every panel and the LookAndFeel.
 
   ==============================================================================
 */
@@ -10,12 +13,15 @@
 
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
+#include "SpectrumDisplay.h"
+#include "LevelMetersPanel.h"
+#include "LatencyPanel.h"
 
 //==============================================================================
-// LookAndFeel that scales JUCE-owned fonts (TextButton, Slider, etc.) by a
+// LookAndFeel that scales JUCE-owned fonts (TextButton, ComboBox, etc.) by a
 // runtime-adjustable factor so the whole UI grows uniformly when the window
 // is resized. Components whose fonts we set directly (Label, TextEditor) have
-// their fonts updated in resized() instead.
+// their fonts updated by their owning panels' setUiScale().
 class WTLookAndFeel  : public juce::LookAndFeel_V4
 {
 public:
@@ -26,13 +32,17 @@ public:
         return juce::Font (juce::FontOptions (13.0f * uiScale));
     }
 
+    juce::Font getComboBoxFont (juce::ComboBox&) override
+    {
+        return juce::Font (juce::FontOptions (13.0f * uiScale));
+    }
+
 private:
     float uiScale = 1.0f;
 };
 
 //==============================================================================
-class WTAnalyzerAudioProcessorEditor  : public juce::AudioProcessorEditor,
-                                        private juce::Timer
+class WTAnalyzerAudioProcessorEditor  : public juce::AudioProcessorEditor
 {
 public:
     // The layout in paint()/resized() is authored at this size. Every pixel and
@@ -48,36 +58,28 @@ public:
     WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioProcessor&);
     ~WTAnalyzerAudioProcessorEditor() override;
 
-    //==============================================================================
     void paint (juce::Graphics&) override;
     void resized() override;
 
 private:
-    void timerCallback() override;
-
-    void commitDelayFromEditor();
-    void applyMeasuredLatency (int samples);
-
-    // Uniform scale factor derived from the smaller of width/height ratios
-    // against the design baseline. Used everywhere in paint()/resized().
     float scale() const noexcept
     {
         return juce::jmin ((float) getWidth()  / (float) kBaseWidth,
                            (float) getHeight() / (float) kBaseHeight);
     }
 
-    // Convenience wrappers so call sites stay short.
-    int   sx (int   baseValue) const noexcept { return juce::roundToInt ((float) baseValue * scale()); }
-    float sf (float baseValue) const noexcept { return baseValue * scale(); }
+    int   sx (int   v) const noexcept { return juce::roundToInt ((float) v * scale()); }
+    float sf (float v) const noexcept { return v * scale(); }
 
     WTAnalyzerAudioProcessor& audioProcessor;
-
     WTLookAndFeel lookAndFeel;
 
-    juce::Label      preDelayLabel;
-    juce::TextEditor preDelayEditor;
-    juce::Label      preDelaySuffix;
-    juce::TextButton autoMeasureButton { "Auto" };
+    SpectrumDisplay  spectrumDisplay;
+    LevelMetersPanel levelMetersPanel;
+    LatencyPanel     latencyPanel;
+
+    juce::ComboBox analysisSelector;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> analysisAttachment;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (WTAnalyzerAudioProcessorEditor)
 };

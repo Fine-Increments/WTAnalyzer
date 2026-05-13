@@ -33,6 +33,15 @@ WTAnalyzerAudioProcessor::createParameterLayout()
         "Pre-Effect Delay (samples)",
         0, kMaxDelaySamples, 0));
 
+    // Active analysis mode. Only the option below exists today; as each
+    // analysis in Source/Analyses/ lands, the choice list grows. See
+    // PRINCIPLES.md section 9: the idiom is established with the first instance.
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { "activeAnalysis", 1 },
+        "Active Analysis",
+        juce::StringArray { "Generic Overlay" },
+        0));
+
     return layout;
 }
 
