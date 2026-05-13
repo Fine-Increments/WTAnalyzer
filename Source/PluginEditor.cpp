@@ -13,16 +13,16 @@
 WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioProcessor& p)
     : AudioProcessorEditor (&p), audioProcessor (p)
 {
+    setLookAndFeel (&lookAndFeel);
+
     addAndMakeVisible (preDelayLabel);
     preDelayLabel.setText ("Pre-Effect delay:", juce::dontSendNotification);
     preDelayLabel.setJustificationType (juce::Justification::centredLeft);
     preDelayLabel.setColour (juce::Label::textColourId, juce::Colours::whitesmoke);
-    preDelayLabel.setFont (juce::FontOptions (13.0f));
 
     addAndMakeVisible (preDelayEditor);
     preDelayEditor.setInputRestrictions (6, "0123456789");
     preDelayEditor.setJustification (juce::Justification::centredRight);
-    preDelayEditor.setFont (juce::FontOptions (13.0f));
     preDelayEditor.setColour (juce::TextEditor::backgroundColourId, juce::Colour (0xff111213));
     preDelayEditor.setColour (juce::TextEditor::textColourId,       juce::Colours::whitesmoke);
     preDelayEditor.setColour (juce::TextEditor::outlineColourId,    juce::Colour (0xff3a3d42));
@@ -35,7 +35,6 @@ WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioP
     preDelaySuffix.setText ("samples", juce::dontSendNotification);
     preDelaySuffix.setJustificationType (juce::Justification::centredLeft);
     preDelaySuffix.setColour (juce::Label::textColourId, juce::Colours::grey);
-    preDelaySuffix.setFont (juce::FontOptions (13.0f));
 
     addAndMakeVisible (autoMeasureButton);
     autoMeasureButton.onClick = [this]
@@ -45,8 +44,17 @@ WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioP
         audioProcessor.measureLatencyRequested.store (true, std::memory_order_release);
     };
 
-    setSize (700, 490);
+    setResizable (true, true);
+    setResizeLimits (kMinWidth, kMinHeight, kMaxWidth, kMaxHeight);
+    setSize (kBaseWidth, kBaseHeight);
+
     startTimerHz (30);
+}
+
+WTAnalyzerAudioProcessorEditor::~WTAnalyzerAudioProcessorEditor()
+{
+    setLookAndFeel (nullptr);  // detach before LookAndFeel member destructs
+    stopTimer();
 }
 
 void WTAnalyzerAudioProcessorEditor::commitDelayFromEditor()
@@ -56,7 +64,7 @@ void WTAnalyzerAudioProcessorEditor::commitDelayFromEditor()
 
     if (auto* param = audioProcessor.apvts.getParameter ("preDelaySamples"))
     {
-        const auto range      = param->getNormalisableRange();
+        const auto range       = param->getNormalisableRange();
         const float normalized = range.convertTo0to1 ((float) clamped);
 
         param->beginChangeGesture();
@@ -67,17 +75,11 @@ void WTAnalyzerAudioProcessorEditor::commitDelayFromEditor()
     preDelayEditor.setText (juce::String (clamped), juce::dontSendNotification);
 }
 
-WTAnalyzerAudioProcessorEditor::~WTAnalyzerAudioProcessorEditor()
-{
-    stopTimer();
-}
-
 //==============================================================================
 void WTAnalyzerAudioProcessorEditor::timerCallback()
 {
     repaint();
 
-    // Pick up the result of an Auto measurement, if one just completed.
     if (audioProcessor.measureLatencyCompleted.exchange (false, std::memory_order_acq_rel))
     {
         const int measured = audioProcessor.lastMeasuredLatencyOffset.load (std::memory_order_acquire);
@@ -86,9 +88,6 @@ void WTAnalyzerAudioProcessorEditor::timerCallback()
         autoMeasureButton.setEnabled (true);
     }
 
-    // Reflect external parameter changes (host automation, preset load) back
-    // into the editor field. Skip while the user is mid-edit to avoid stomping
-    // on their typing.
     if (! preDelayEditor.hasKeyboardFocus (false))
     {
         const int current   = (int) *audioProcessor.apvts.getRawParameterValue ("preDelaySamples");
@@ -113,25 +112,45 @@ void WTAnalyzerAudioProcessorEditor::applyMeasuredLatency (int samples)
     }
 }
 
+//==============================================================================
 void WTAnalyzerAudioProcessorEditor::paint (juce::Graphics& g)
 {
     g.fillAll (juce::Colour (0xff202225));
 
-    auto bounds = getLocalBounds().reduced (16);
+    auto bounds = getLocalBounds().reduced (sx (16));
 
+    // Header.
     g.setColour (juce::Colours::whitesmoke);
-    g.setFont (juce::FontOptions (16.0f));
+    g.setFont (juce::FontOptions (sf (16.0f)));
     g.drawText ("WTAnalyzer",
-                bounds.removeFromTop (24),
+                bounds.removeFromTop (sx (24)),
                 juce::Justification::centredLeft);
 
-    bounds.removeFromTop (8);
+    bounds.removeFromTop (sx (8));
 
-    // Spectrum overlay: log frequency on X, dB magnitude on Y, pre + post traces overlaid.
-    auto spectrumArea = bounds.removeFromTop (280);
+    // Reserve the controls strip at the bottom; spectrum gets all remaining height.
+    auto delayRow = bounds.removeFromBottom (sx (30));
+    bounds.removeFromBottom (sx (12));
+    auto preMeterRow  = bounds.removeFromBottom (sx (40));
+    bounds.removeFromBottom (sx (4));
+    auto postMeterRow = bounds.removeFromBottom (sx (40));
+    bounds.removeFromBottom (sx (12));
+
+    juce::ignoreUnused (delayRow);  // delay row controls are positioned in resized().
+
+    // Spectrum plot fills whatever height is left.
     {
+        auto spectrumArea = bounds;
         g.setColour (juce::Colour (0xff111213));
         g.fillRect (spectrumArea);
+
+        // Reserve gutters for axis labels (scaled).
+        const int dbGutter   = sx (34);
+        const int freqGutter = sx (16);
+
+        auto labelGutterBottom = spectrumArea.removeFromBottom (freqGutter);
+        auto labelGutterLeft   = spectrumArea.removeFromLeft  (dbGutter);
+        const auto plotArea    = spectrumArea;  // what remains after gutters
 
         const float sr = audioProcessor.currentSampleRate.load (std::memory_order_relaxed);
         constexpr float kMinFreq = 20.0f;
@@ -144,26 +163,80 @@ void WTAnalyzerAudioProcessorEditor::paint (juce::Graphics& g)
         constexpr float kMaxDb = 6.0f;
         const float     dbRange = kMaxDb - kMinDb;
 
-        // Grid lines: decade frequencies and standard dB levels.
+        auto freqToX = [&] (float freq) -> float
+        {
+            const float t = (std::log10 (freq) - logMin) / logRange;
+            return (float) plotArea.getX() + t * (float) plotArea.getWidth();
+        };
+
+        auto dbToY = [&] (float db) -> float
+        {
+            const float t = (db - kMinDb) / dbRange;
+            return (float) plotArea.getY() + (1.0f - t) * (float) plotArea.getHeight();
+        };
+
+        // Grid lines.
         g.setColour (juce::Colour (0xff2a2d32));
-        for (float freq : { 100.0f, 1000.0f, 10000.0f })
+        const std::array<float, 6> kFreqGrid { 30.0f, 100.0f, 300.0f, 1000.0f, 3000.0f, 10000.0f };
+        for (float f : kFreqGrid)
         {
-            const float tx = (std::log10 (freq) - logMin) / logRange;
-            const float x  = (float) spectrumArea.getX() + tx * (float) spectrumArea.getWidth();
-            g.drawLine (x, (float) spectrumArea.getY(), x, (float) spectrumArea.getBottom(), 1.0f);
+            if (f < kMinFreq || f > kMaxFreq) continue;
+            const float x = freqToX (f);
+            g.drawLine (x, (float) plotArea.getY(), x, (float) plotArea.getBottom(), sf (1.0f));
         }
-        for (float db : { -60.0f, -40.0f, -20.0f, 0.0f })
+        const std::array<float, 5> kDbGrid { -60.0f, -40.0f, -20.0f, 0.0f, 6.0f };
+        for (float db : kDbGrid)
         {
-            const float ty = (db - kMinDb) / dbRange;
-            const float y  = (float) spectrumArea.getY() + (1.0f - ty) * (float) spectrumArea.getHeight();
-            g.drawLine ((float) spectrumArea.getX(), y, (float) spectrumArea.getRight(), y, 1.0f);
+            const float y = dbToY (db);
+            g.drawLine ((float) plotArea.getX(), y, (float) plotArea.getRight(), y, sf (1.0f));
         }
 
+        // Axis labels.
+        g.setColour (juce::Colours::grey);
+        g.setFont (juce::FontOptions (sf (10.0f)));
+
+        // Frequency labels along the bottom (only "round" values that fit).
+        struct FreqLabel { float hz; const char* text; };
+        const std::array<FreqLabel, 8> kFreqLabels {{
+            { 20.0f,    "20"  }, { 50.0f,    "50"   }, { 100.0f,  "100" },
+            { 500.0f,   "500" }, { 1000.0f,  "1k"   }, { 5000.0f, "5k"  },
+            { 10000.0f, "10k" }, { 20000.0f, "20k"  }
+        }};
+        for (auto label : kFreqLabels)
+        {
+            if (label.hz < kMinFreq || label.hz > kMaxFreq) continue;
+            const float x = freqToX (label.hz);
+            const int textWidth = sx (32);
+            juce::Rectangle<int> r ((int) x - textWidth / 2,
+                                    labelGutterBottom.getY(),
+                                    textWidth,
+                                    labelGutterBottom.getHeight());
+            g.drawText (label.text, r, juce::Justification::centredTop, false);
+        }
+
+        // dB labels along the left.
+        struct DbLabel { float db; const char* text; };
+        const std::array<DbLabel, 5> kDbLabels {{
+            { 0.0f,   "0"   }, { -20.0f, "-20" }, { -40.0f, "-40" },
+            { -60.0f, "-60" }, { -80.0f, "-80" }
+        }};
+        for (auto label : kDbLabels)
+        {
+            const float y = dbToY (label.db);
+            const int textHeight = sx (12);
+            juce::Rectangle<int> r (labelGutterLeft.getX(),
+                                    (int) y - textHeight / 2,
+                                    labelGutterLeft.getWidth() - sx (4),
+                                    textHeight);
+            g.drawText (label.text, r, juce::Justification::centredRight, false);
+        }
+
+        // Spectrum traces.
         auto plotTrace = [&] (const std::array<float, WTAnalyzerAudioProcessor::kSpectrumBins>& spec,
                               juce::Colour colour)
         {
-            const int   N             = WTAnalyzerAudioProcessor::kSpectrumBins;
-            const float binFreqScale  = sr / (float) WTAnalyzerAudioProcessor::kSpectrumFftSize;
+            const int   N            = WTAnalyzerAudioProcessor::kSpectrumBins;
+            const float binFreqScale = sr / (float) WTAnalyzerAudioProcessor::kSpectrumFftSize;
 
             juce::Path path;
             bool       first = true;
@@ -174,35 +247,32 @@ void WTAnalyzerAudioProcessorEditor::paint (juce::Graphics& g)
                 if (f < kMinFreq) continue;
                 if (f > kMaxFreq) break;
 
-                const float tx = (std::log10 (f) - logMin) / logRange;
-                const float ty = (juce::jlimit (kMinDb, kMaxDb, spec[bin]) - kMinDb) / dbRange;
-
-                const float x = (float) spectrumArea.getX() + tx * (float) spectrumArea.getWidth();
-                const float y = (float) spectrumArea.getY() + (1.0f - ty) * (float) spectrumArea.getHeight();
+                const float clampedDb = juce::jlimit (kMinDb, kMaxDb, spec[bin]);
+                const float x = freqToX (f);
+                const float y = dbToY (clampedDb);
 
                 if (first) { path.startNewSubPath (x, y); first = false; }
                 else       { path.lineTo          (x, y); }
             }
 
             g.setColour (colour);
-            g.strokePath (path, juce::PathStrokeType (1.2f));
+            g.strokePath (path, juce::PathStrokeType (sf (1.2f)));
         };
 
-        plotTrace (audioProcessor.preSpectrumDb,  juce::Colour (0xffe0a050));  // amber
-        plotTrace (audioProcessor.postSpectrumDb, juce::Colour (0xff5cd4e8));  // cyan
+        plotTrace (audioProcessor.preSpectrumDb,  juce::Colour (0xffe0a050));  // pre = amber
+        plotTrace (audioProcessor.postSpectrumDb, juce::Colour (0xff5cd4e8));  // post = cyan
     }
 
-    bounds.removeFromTop (12);
-
+    // Meters.
     auto drawMeter = [&] (juce::Rectangle<int> row, const juce::String& label,
                           float db, bool active)
     {
-        auto labelArea = row.removeFromLeft (110);
+        auto labelArea = row.removeFromLeft (sx (110));
         g.setColour (active ? juce::Colours::whitesmoke : juce::Colours::grey);
-        g.setFont (juce::FontOptions (14.0f));
+        g.setFont (juce::FontOptions (sf (14.0f)));
         g.drawText (label, labelArea, juce::Justification::centredLeft);
 
-        auto meter = row.reduced (4, 6);
+        auto meter = row.reduced (sx (4), sx (6));
         g.setColour (juce::Colour (0xff111213));
         g.fillRect (meter);
 
@@ -216,42 +286,48 @@ void WTAnalyzerAudioProcessorEditor::paint (juce::Graphics& g)
         }
 
         g.setColour (juce::Colours::whitesmoke);
-        g.setFont (juce::FontOptions (12.0f));
+        g.setFont (juce::FontOptions (sf (12.0f)));
         g.drawText (active ? juce::String (db, 1) + " dB" : juce::String ("(not routed)"),
-                    meter.reduced (6, 0),
+                    meter.reduced (sx (6), 0),
                     juce::Justification::centredRight);
     };
 
-    drawMeter (bounds.removeFromTop (40), "Post-Effect",
+    drawMeter (postMeterRow, "Post-Effect",
                audioProcessor.postEffectLevelDb.load (std::memory_order_relaxed),
                true);
 
-    bounds.removeFromTop (4);
-
-    drawMeter (bounds.removeFromTop (40), "Pre-Effect",
+    drawMeter (preMeterRow, "Pre-Effect",
                audioProcessor.preEffectLevelDb.load (std::memory_order_relaxed),
                audioProcessor.preBusActive.load (std::memory_order_relaxed));
 }
 
 void WTAnalyzerAudioProcessorEditor::resized()
 {
-    // Mirror the y-walk used in paint() so the delay row lines up with the
-    // reserved space (header + spectrum + 2 meters + their gaps).
-    auto bounds = getLocalBounds().reduced (16);
-    bounds.removeFromTop (24);   // header
-    bounds.removeFromTop (8);    // gap
-    bounds.removeFromTop (280);  // spectrum
-    bounds.removeFromTop (12);   // gap
-    bounds.removeFromTop (40);   // post-effect meter
-    bounds.removeFromTop (4);    // gap
-    bounds.removeFromTop (40);   // pre-effect meter
-    bounds.removeFromTop (12);   // gap
+    const float s = scale();
+    lookAndFeel.setUiScale (s);
 
-    auto delayRow = bounds.removeFromTop (30);
-    preDelayLabel    .setBounds (delayRow.removeFromLeft (130));
-    preDelayEditor   .setBounds (delayRow.removeFromLeft (90).reduced (0, 3));
-    delayRow.removeFromLeft (6);
-    preDelaySuffix   .setBounds (delayRow.removeFromLeft (60));
-    delayRow.removeFromLeft (12);
-    autoMeasureButton.setBounds (delayRow.removeFromLeft (70).reduced (0, 3));
+    // Update directly-set component fonts to track the new scale.
+    preDelayLabel .setFont (juce::FontOptions (sf (13.0f)));
+    preDelayEditor.setFont (juce::FontOptions (sf (13.0f)));
+    preDelaySuffix.setFont (juce::FontOptions (sf (13.0f)));
+
+    // Mirror paint()'s top-then-bottom layout walk.
+    auto bounds = getLocalBounds().reduced (sx (16));
+    bounds.removeFromTop    (sx (24));   // header
+    bounds.removeFromTop    (sx (8));    // gap
+
+    auto delayRow = bounds.removeFromBottom (sx (30));
+    bounds.removeFromBottom (sx (12));
+    bounds.removeFromBottom (sx (40));   // pre meter
+    bounds.removeFromBottom (sx (4));
+    bounds.removeFromBottom (sx (40));   // post meter
+    bounds.removeFromBottom (sx (12));
+    // bounds now holds the spectrum area; not needed for layout.
+
+    preDelayLabel    .setBounds (delayRow.removeFromLeft (sx (130)));
+    preDelayEditor   .setBounds (delayRow.removeFromLeft (sx (90)).reduced (0, sx (3)));
+    delayRow.removeFromLeft (sx (6));
+    preDelaySuffix   .setBounds (delayRow.removeFromLeft (sx (60)));
+    delayRow.removeFromLeft (sx (12));
+    autoMeasureButton.setBounds (delayRow.removeFromLeft (sx (70)).reduced (0, sx (3)));
 }

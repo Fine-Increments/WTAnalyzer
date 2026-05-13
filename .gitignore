@@ -26,3 +26,7 @@ xcuserdata/
 *.so
 *.a
 *.lib
+
+# Internal design docs (kept local; not part of the public repo).
+PLANNING.md
+PRINCIPLES.md

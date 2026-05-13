@@ -18,10 +18,12 @@ Pre-alpha. Built so far:
   signal through.
 - Manual pre-effect delay (sample-accurate) for aligning the two buses.
 - Auto-measurement of pre/post latency via FFT-based cross-correlation.
+- Real-time pre/post FFT spectrum overlay with log-frequency and dB axes.
+- Fully responsive UI - the window is user-resizable and every element
+  (controls, text, plot, axis labels) scales uniformly with size.
 
-Not yet built (see [PLANNING.md](PLANNING.md) for the full roadmap):
+Not yet built:
 
-- FFT spectrum overlay (first visible analysis output).
 - The ten built-in analysis methods: frequency response, THD, IMD, Farina
   deconvolution, multisine flatness, impulse response, step response,
   aliasing detection, transfer function from noise, generic overlay.
@@ -68,24 +70,6 @@ as a post-build step.
 
 Currently macOS only. Windows and Linux builds can be regenerated from
 `WTAnalyzer.jucer` via [Projucer](https://juce.com/projucer); not yet tested.
-
-## Design
-
-The source of truth for design decisions and roadmap is
-[PLANNING.md](PLANNING.md). Section index:
-
-- 1: What this plugin is
-- 2: How it integrates with WTSynth (script picker, sidecar JSON,
-  analysis registry, script authoring convention)
-- 3: Architecture (bus shape, code structure)
-- 4-5: Analysis methods and display patterns
-- 6: Sweep handling and latency compensation
-- 7: Implementation phases (v0 -> v1 -> v2 -> ...)
-- 8: Key design decisions
-- 9: Explicit non-goals
-- 10: Comparison with Plugin Doctor
-- 11: Open questions
-- 12-13: Repo layout, background context
 
 ## Credits
 
