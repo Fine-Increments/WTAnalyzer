@@ -1,0 +1,28 @@
+# JUCE-generated output: regenerate via Projucer from WTAnalyzer.jucer
+Builds/
+JuceLibraryCode/
+
+# Xcode user state
+*.xcuserdata/
+xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcuserstate
+
+# IDE / editor cruft
+.vscode/
+.idea/
+*.swp
+*.user
+*.suo
+
+# macOS
+.DS_Store
+
+# Compiled artifacts
+*.o
+*.obj
+*.exe
+*.dylib
+*.so
+*.a
+*.lib
