@@ -2,7 +2,7 @@
 
 > Companion analyzer plugin for WTSynth-driven effect testing.
 > Author: Fine Increments. Collaborator: Shane Dunne (author of WTSynth).
-> Last updated: 2026-05-12.
+> Last updated: 2026-05-13.
 
 ## 1. What this plugin is
 
@@ -606,11 +606,16 @@ In linear-track DAWs (Ableton, Logic, Reaper, Cubase, etc.) the pre-effect and p
 
 Approaches, applied in priority order:
 
-1. **Manual entry.** A "Pre-Effect Delay (samples)" integer parameter in the plugin's APVTS, exposed in the editor as a number box. The user types the effect's latency (often known from the effect's UI). Applied via a `juce::dsp::DelayLine` on the pre-effect (sidechain) bus before any measurement. Always available; the ground truth when measurement is uncertain.
-2. **Auto-measure via cross-correlation.** Find the peak of `correlate(pre, post)`, delay the leading bus by that many samples to align with the trailing bus. Works regardless of host cooperation. Writes its result into the manual-entry parameter, so the user can see and override it.
+1. **Manual entry.** A "Pre-Effect Delay (samples)" integer parameter in the plugin's APVTS, exposed in the editor as a number box. The user types the effect's latency (often known from the effect's UI, or derivable). Applied via a `juce::dsp::DelayLine` on the pre-effect (sidechain) bus before any measurement. Always available; the ground truth when host PDC is masking the offset.
+2. **Auto-measure via cross-correlation.** FFT-based: 16384-sample capture of raw pre and post on channel 0, DC-removed and Hann-windowed before forward FFT, cross-spectrum `conj(A)*B`, inverse FFT, peak search over positive lags `[0, kXcorrMaxLag)`. Writes its result into the manual-entry parameter via the editor's APVTS path. Triggered by an "Auto" button.
 3. **Query the host's reported latency** — JUCE's `AudioProcessor` plumbing exposes plugin-reported latency in some wrapper contexts. Use as a cross-check / sanity readout; some DAWs report this honestly, some don't.
 
-**(1) is v1-mandatory** — landed as of 2026-05-12 with the `preDelaySamples` parameter and a `juce::dsp::DelayLine<float, None>` on the pre-effect bus. **(2) is v1-mandatory** and must land before `FrequencyResponse` (v2 in §7) can claim to be honest. (3) is supplementary diagnostic information.
+**Both (1) and (2) landed as of 2026-05-13.** The full chain: ring buffers fill continuously in `processBlock` before manual delay is applied, so a measurement returns the absolute effect-induced offset rather than residual. The math was verified against a synthetic self-test (white noise + known delay through the same algorithm path) before the debug surface was removed.
+
+**Important caveat about hosts with PDC.** Ableton (and other DAWs) compensate the sidechain bus internally so that pre and post arrive sample-aligned at the plugin's inputs. With PDC active, Auto correctly reports lag ~0 because the offset has already been removed by the host - there is nothing left to measure. The fallback in that case is manual entry: the user types the effect's reported latency, and our delay line compensates. Auto is genuinely useful when:
+- The host has no PDC (graph hosts, some embedded contexts).
+- The user has explicitly disabled PDC (Ableton: Options menu > Delay Compensation toggle off).
+- The effect under test doesn't report latency to the host, so PDC can't compensate it.
 
 ## 7. Implementation phases
 
@@ -620,12 +625,12 @@ Approaches, applied in priority order:
 - VST3 + AU formats, macOS only for now
 - C++20
 
-### v1 — Two-bus capture & basic spectrum overlay
-- Add two input buses + one output (constructor + `isBusesLayoutSupported`)
-- Latency auto-compensation between Pre and Post via cross-correlation (see §6) — load-bearing for any downstream measurement to be honest
-- Hook a `juce::dsp::FFT` engine
-- Real-time pre/post spectrum overlay display
-- Verify routing in Ableton Live (sidechain "Audio From → …") as the primary target; AudioPluginHost as the fast dev-iteration loop
+### v1 — Two-bus capture & basic spectrum overlay  [landed 2026-05-13]
+- Two input buses + one output, with bus 0 = main = Post-Effect and bus 1 = sidechain = Pre-Effect.
+- Manual pre-effect delay via APVTS integer parameter + `juce::dsp::DelayLine` on the sidechain bus.
+- Auto cross-correlation measurement of pre/post offset (FFT-based, 16384-sample window padded to 32768) writes its result into the same parameter.
+- Real-time spectrum overlay: 4096-point Hann-windowed FFT with 75% overlap (~47 Hz refresh), one trace per bus, log frequency axis (20 Hz to Nyquist), dB Y axis (-80 to +6).
+- Verified in Ableton Live via sidechain routing (Audio From -> source track, Post FX). PDC interaction documented in §6.
 
 ### v2 — First analysis: `FrequencyResponse`
 - Run FFT on both inputs continuously

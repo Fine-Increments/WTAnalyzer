@@ -85,11 +85,33 @@ public:
     // Last measured pre-vs-post offset in samples.
     std::atomic<int>  lastMeasuredLatencyOffset { 0 };
 
+    // Spectrum overlay: continuously updated FFT magnitudes of the
+    // delay-compensated pre and the post-effect signals.
+    static constexpr int kSpectrumFftOrder = 12;                       // 4096-point
+    static constexpr int kSpectrumFftSize  = 1 << kSpectrumFftOrder;
+    static constexpr int kSpectrumBins     = kSpectrumFftSize / 2;     // 2048 unique bins
+    static constexpr int kSpectrumHopSize  = kSpectrumFftSize / 4;     // 75% overlap
+
+    // Magnitude in dB per bin, written by audio thread and read directly by
+    // the editor. Direct reads can momentarily tear across bins; visually
+    // imperceptible at 30 Hz repaint and not worth the cost of double buffering.
+    std::array<float, kSpectrumBins> preSpectrumDb  {};
+    std::array<float, kSpectrumBins> postSpectrumDb {};
+
+    // Increments each time a new spectrum frame is written. Available for the
+    // editor if it ever wants to repaint only on fresh data.
+    std::atomic<int> spectrumFrameCount { 0 };
+
+    // Sample rate captured during prepareToPlay so the editor can convert
+    // FFT bin indices to frequencies for the X-axis.
+    std::atomic<float> currentSampleRate { 48000.0f };
+
 private:
     //==============================================================================
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
     void runLatencyMeasurement();
+    int  computeCrossCorrelationFromScratch();
 
     // Delay line applied to the pre-effect (sidechain) bus to align it with
     // the post-effect (main) signal. Integer-sample resolution; sub-sample
@@ -100,6 +122,15 @@ private:
     // FFT used for cross-correlation. Real-only forward + inverse transforms
     // are non-allocating after construction.
     juce::dsp::FFT xcorrFft { kXcorrFftOrder };
+
+    // Hann window applied to both signals before FFT. Tapers the edges so the
+    // captured signal mass is centered, sharpens the correlation peak, and
+    // suppresses the secondary peaks that otherwise vote for random lags when
+    // transient-rich signals are captured.
+    juce::dsp::WindowingFunction<float> xcorrWindow {
+        (size_t) kXcorrSignalLen,
+        juce::dsp::WindowingFunction<float>::hann
+    };
 
     // Continuously filled ring buffers (channel 0 only) of the raw pre and
     // post signals - filled before manual delay is applied so the measurement
@@ -112,6 +143,26 @@ private:
     // full conjugate-symmetric complex output produced by JUCE's real FFT.
     std::array<float, 2 * kXcorrFftSize> xcorrScratchA {};
     std::array<float, 2 * kXcorrFftSize> xcorrScratchB {};
+
+    void runSpectrumFft();
+
+    juce::dsp::FFT spectrumFft { kSpectrumFftOrder };
+    juce::dsp::WindowingFunction<float> spectrumWindow {
+        (size_t) kSpectrumFftSize,
+        juce::dsp::WindowingFunction<float>::hann
+    };
+
+    // Per-bus circular buffers holding the most recent kSpectrumFftSize samples
+    // of channel 0 of the delay-compensated pre and the post bus.
+    std::array<float, kSpectrumFftSize> spectrumPreBuffer  {};
+    std::array<float, kSpectrumFftSize> spectrumPostBuffer {};
+
+    // Working buffer for the FFT: 2 * N floats because JUCE's real FFT writes
+    // its output as interleaved complex pairs over the full buffer.
+    std::array<float, 2 * kSpectrumFftSize> spectrumScratch {};
+
+    int spectrumWritePos      = 0;
+    int samplesSinceLastSpectrumFft = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (WTAnalyzerAudioProcessor)
 };
