@@ -9,6 +9,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include "Analyses/FrequencyResponse.h"
 
 //==============================================================================
 /**
@@ -106,6 +107,15 @@ public:
     // FFT bin indices to frequencies for the X-axis.
     std::atomic<float> currentSampleRate { 48000.0f };
 
+    // Active analysis (FrequencyResponse, etc.). Display reads via this enum
+    // to decide which mode-specific overlays to draw. Stays in sync with the
+    // APVTS `activeAnalysis` parameter via updates in processBlock.
+    enum class AnalysisMode { GenericOverlay = 0, FrequencyResponse = 1 };
+
+    // First analysis: derived from the existing pre/post spectrum FFT.
+    // See Analyses/FrequencyResponse.h for the algorithm.
+    FrequencyResponse frequencyResponse;
+
 private:
     //==============================================================================
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
@@ -163,6 +173,10 @@ private:
 
     int spectrumWritePos      = 0;
     int samplesSinceLastSpectrumFft = 0;
+
+    // Tracks the activeAnalysis parameter value seen on the last FFT so we
+    // can reset the active analysis state on mode change. Audio-thread only.
+    int lastActiveAnalysisIndex = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (WTAnalyzerAudioProcessor)
 };

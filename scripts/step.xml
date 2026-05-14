@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<ParameterSet>
+  <Choice name="Mode" minVal="0" maxVal="2" defaultVal="2">
+   <Item String="Naive"/>
+   <Item String="Symmetric Step"/>
+   <Item String="Bandlimited Sweep"/>
+  </Choice>
+  <Int name="Position" minVal="0" maxVal="2047" defaultVal="1024"/>
+  <Int name="MaxHarmonic" minVal="3" maxVal="1023" defaultVal="255"/>
+  <Int name="#Frames" minVal="2" maxVal="256" defaultVal="32"/>
+</ParameterSet>

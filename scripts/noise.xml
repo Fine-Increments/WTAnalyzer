@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<ParameterSet>
+  <Choice name="Color" minVal="0" maxVal="4" defaultVal="1">
+   <Item String="White"/>
+   <Item String="Pink"/>
+   <Item String="Brown"/>
+   <Item String="Blue"/>
+   <Item String="Violet"/>
+  </Choice>
+  <Int name="SeedOffset" minVal="0" maxVal="1000" defaultVal="0"/>
+  <Int name="#Frames" minVal="2" maxVal="64" defaultVal="16"/>
+</ParameterSet>

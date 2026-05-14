@@ -151,4 +151,45 @@ void SpectrumDisplay::paint (juce::Graphics& g)
 
     plotTrace (processor.preSpectrumDb,  juce::Colour (0xffe0a050));  // pre  = amber
     plotTrace (processor.postSpectrumDb, juce::Colour (0xff5cd4e8));  // post = cyan
+
+    // When FrequencyResponse mode is active, overlay the transfer function
+    // trace. Bins flagged as "no measurement" (pre too quiet) break the path
+    // so the curve doesn't fake a value where none exists.
+    const int activeAnalysisIdx = (int) *processor.apvts.getRawParameterValue ("activeAnalysis");
+    if (activeAnalysisIdx == (int) WTAnalyzerAudioProcessor::AnalysisMode::FrequencyResponse)
+    {
+        const auto& response = processor.frequencyResponse.getResponseDb();
+        const int   N            = (int) response.size();
+        const float binFreqScale = sr / (float) WTAnalyzerAudioProcessor::kSpectrumFftSize;
+
+        juce::Path path;
+        bool       hasOpenSubPath = false;
+
+        for (int bin = 1; bin < N; ++bin)
+        {
+            const float f = (float) bin * binFreqScale;
+            if (f < kMinFreq) continue;
+            if (f > kMaxFreq) break;
+
+            const float db = response[(size_t) bin];
+
+            if (db <= FrequencyResponse::kNoMeasurementDb + 0.5f)
+            {
+                // No valid measurement at this bin; break the path so the
+                // line doesn't fake continuity through a no-data region.
+                hasOpenSubPath = false;
+                continue;
+            }
+
+            const float clampedDb = juce::jlimit (kMinDb, kMaxDb, db);
+            const float x = freqToX (f);
+            const float y = dbToY (clampedDb);
+
+            if (! hasOpenSubPath) { path.startNewSubPath (x, y); hasOpenSubPath = true; }
+            else                  { path.lineTo          (x, y); }
+        }
+
+        g.setColour (juce::Colour (0xff9be15c));   // transfer function = green-yellow
+        g.strokePath (path, juce::PathStrokeType (sf (1.6f)));   // slightly thicker than spectrum traces
+    }
 }

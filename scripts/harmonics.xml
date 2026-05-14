@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<ParameterSet>
+  <Choice name="Shape" minVal="0" maxVal="2" defaultVal="0">
+   <Item String="Sawtooth"/>
+   <Item String="Square"/>
+   <Item String="Triangle"/>
+  </Choice>
+  <Int name="Start" minVal="1" maxVal="64" defaultVal="4"/>
+  <Int name="End" minVal="2" maxVal="1024" defaultVal="256"/>
+  <Int name="#Frames" minVal="2" maxVal="256" defaultVal="32"/>
+</ParameterSet>

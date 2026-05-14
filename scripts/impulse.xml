@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<ParameterSet>
+  <Choice name="Mode" minVal="0" maxVal="3" defaultVal="0">
+   <Item String="Single Impulse"/>
+   <Item String="Sweep Position"/>
+   <Item String="Pair"/>
+   <Item String="Comb"/>
+  </Choice>
+  <Int name="Position" minVal="0" maxVal="2047" defaultVal="0"/>
+  <Int name="CombMax" minVal="2" maxVal="256" defaultVal="32"/>
+  <Int name="#Frames" minVal="2" maxVal="256" defaultVal="32"/>
+</ParameterSet>

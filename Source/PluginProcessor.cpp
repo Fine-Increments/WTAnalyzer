@@ -33,13 +33,13 @@ WTAnalyzerAudioProcessor::createParameterLayout()
         "Pre-Effect Delay (samples)",
         0, kMaxDelaySamples, 0));
 
-    // Active analysis mode. Only the option below exists today; as each
-    // analysis in Source/Analyses/ lands, the choice list grows. See
-    // PRINCIPLES.md section 9: the idiom is established with the first instance.
+    // Active analysis mode. Index order matches AnalysisMode enum in
+    // PluginProcessor.h; adding an analysis means appending to both the
+    // enum and this StringArray.
     layout.add (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { "activeAnalysis", 1 },
         "Active Analysis",
-        juce::StringArray { "Generic Overlay" },
+        juce::StringArray { "Generic Overlay", "Frequency Response" },
         0));
 
     return layout;
@@ -134,6 +134,9 @@ void WTAnalyzerAudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
     samplesSinceLastSpectrumFft = 0;
     preSpectrumDb.fill (-120.0f);
     postSpectrumDb.fill (-120.0f);
+
+    frequencyResponse.prepare (kSpectrumBins);
+    lastActiveAnalysisIndex = (int) *apvts.getRawParameterValue ("activeAnalysis");
 }
 
 void WTAnalyzerAudioProcessor::runLatencyMeasurement()
@@ -191,6 +194,21 @@ void WTAnalyzerAudioProcessor::runSpectrumFft()
 
     fftOne (spectrumPreBuffer,  preSpectrumDb);
     fftOne (spectrumPostBuffer, postSpectrumDb);
+
+    // Drive the active analysis from the same spectrum data. Selective
+    // execution per PRINCIPLES.md section 9: only the active analysis runs.
+    // The Generic Overlay mode (index 0) needs nothing beyond the pre/post
+    // dB arrays we just produced for the universal spectrum overlay.
+    const int activeIndex = (int) *apvts.getRawParameterValue ("activeAnalysis");
+
+    if (activeIndex != lastActiveAnalysisIndex)
+    {
+        frequencyResponse.reset();
+        lastActiveAnalysisIndex = activeIndex;
+    }
+
+    if (activeIndex == (int) AnalysisMode::FrequencyResponse)
+        frequencyResponse.update (preSpectrumDb.data(), postSpectrumDb.data());
 
     spectrumFrameCount.fetch_add (1, std::memory_order_release);
 }

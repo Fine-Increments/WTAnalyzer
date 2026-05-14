@@ -28,6 +28,12 @@
             file="Source/LatencyPanel.cpp"/>
       <FILE id="LPan02" name="LatencyPanel.h" compile="0" resource="0"
             file="Source/LatencyPanel.h"/>
+      <GROUP id="{8A3B5F12-D6E4-4C9A-B201-9F4E7C3A1D8E}" name="Analyses">
+        <FILE id="FrRsp1" name="FrequencyResponse.cpp" compile="1" resource="0"
+              file="Source/Analyses/FrequencyResponse.cpp"/>
+        <FILE id="FrRsp2" name="FrequencyResponse.h" compile="0" resource="0"
+              file="Source/Analyses/FrequencyResponse.h"/>
+      </GROUP>
     </GROUP>
   </MAINGROUP>
   <MODULES>

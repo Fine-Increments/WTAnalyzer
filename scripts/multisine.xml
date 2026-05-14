@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<ParameterSet>
+  <Choice name="Phase" minVal="0" maxVal="3" defaultVal="0">
+   <Item String="Schroeder"/>
+   <Item String="Random"/>
+   <Item String="Zero"/>
+   <Item String="Sweep"/>
+  </Choice>
+  <Int name="MaxHarmonic" minVal="2" maxVal="512" defaultVal="64"/>
+  <Int name="#Frames" minVal="2" maxVal="256" defaultVal="32"/>
+</ParameterSet>

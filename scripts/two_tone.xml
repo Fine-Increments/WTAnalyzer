@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<ParameterSet>
+  <Choice name="Mode" minVal="0" maxVal="2" defaultVal="1">
+   <Item String="Fixed Pair"/>
+   <Item String="Sweep Upper"/>
+   <Item String="Both Sweep"/>
+  </Choice>
+  <Int name="Lower" minVal="1" maxVal="64" defaultVal="3"/>
+  <Int name="Upper" minVal="1" maxVal="128" defaultVal="19"/>
+  <Int name="#Frames" minVal="8" maxVal="256" defaultVal="64"/>
+</ParameterSet>
