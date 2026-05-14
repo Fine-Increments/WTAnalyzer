@@ -40,7 +40,7 @@ WTAnalyzerAudioProcessor::createParameterLayout()
         juce::ParameterID { "activeAnalysis", 1 },
         "Active Analysis",
         juce::StringArray { "Generic Overlay", "Frequency Response", "THD Measurement",
-                            "Aliasing Detection" },
+                            "Aliasing Detection", "IMD Measurement" },
         0));
 
     // Level meter mode: false = Peak (default, matches DAW meter behaviour),
@@ -69,6 +69,25 @@ WTAnalyzerAudioProcessor::createParameterLayout()
         "Aliasing View",
         juce::StringArray { "Composite", "Pre", "Post" },
         0));
+
+    // IMD bars view: which intermodulation-product bar set to show.
+    // Differential (default) is the added-energy view; Pre/Post show each
+    // signal's own product magnitudes as a sanity check. The IMD% readout
+    // is always the differential regardless of view.
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { "imdBarsView", 1 },
+        "IMD Bars View",
+        juce::StringArray { "Differential", "Pre", "Post" },
+        0));
+
+    // IMD bars layout: false (default) = "By Order" - bars in fixed slots
+    // ordered by |m|+|n| with formula labels in the bottom gutter.
+    // true = "By Hz" - bars positioned at their actual product frequency
+    // on a log axis with frequency labels along the bottom.
+    layout.add (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { "imdHzLayout", 1 },
+        "IMD Bars by Hz",
+        false));
 
     return layout;
 }
@@ -168,6 +187,7 @@ void WTAnalyzerAudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
     const float binFreqScale = (float) sampleRate / (float) kSpectrumFftSize;
     thdMeasurement   .prepare (kSpectrumBins, binFreqScale);
     aliasingDetection.prepare (kSpectrumBins, binFreqScale);
+    imdMeasurement   .prepare (kSpectrumBins, binFreqScale);
 
     lastActiveAnalysisIndex = (int) *apvts.getRawParameterValue ("activeAnalysis");
 }
@@ -239,6 +259,7 @@ void WTAnalyzerAudioProcessor::runSpectrumFft()
         frequencyResponse.reset();
         thdMeasurement   .reset();
         aliasingDetection.reset();
+        imdMeasurement   .reset();
         lastActiveAnalysisIndex = activeIndex;
     }
 
@@ -248,6 +269,8 @@ void WTAnalyzerAudioProcessor::runSpectrumFft()
         thdMeasurement.update (preSpectrumDb.data(), postSpectrumDb.data());
     else if (activeIndex == (int) AnalysisMode::AliasingDetection)
         aliasingDetection.update (preSpectrumDb.data(), postSpectrumDb.data());
+    else if (activeIndex == (int) AnalysisMode::IMDMeasurement)
+        imdMeasurement.update (preSpectrumDb.data(), postSpectrumDb.data());
 
     spectrumFrameCount.fetch_add (1, std::memory_order_release);
 }

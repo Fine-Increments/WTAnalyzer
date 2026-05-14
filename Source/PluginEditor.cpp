@@ -16,6 +16,7 @@ WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioP
       spectrumDisplay      (p),
       cursorReadout        (spectrumDisplay),
       thdDisplay           (p),
+      imdDisplay           (p),
       levelMetersPanel     (p),
       latencyPanel         (p)
 {
@@ -24,6 +25,7 @@ WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioP
     addAndMakeVisible (spectrumDisplay);
     addAndMakeVisible (cursorReadout);
     addChildComponent (thdDisplay);     // hidden by default; applyAnalysisMode shows it
+    addChildComponent (imdDisplay);
     addAndMakeVisible (levelMetersPanel);
     addAndMakeVisible (latencyPanel);
 
@@ -72,10 +74,12 @@ void WTAnalyzerAudioProcessorEditor::applyAnalysisMode (int modeIndex)
                                   || modeIndex == (int) Mode::FrequencyResponse
                                   || modeIndex == (int) Mode::AliasingDetection);
     const bool wantsThdPath      = (modeIndex == (int) Mode::THDMeasurement);
+    const bool wantsImdPath      = (modeIndex == (int) Mode::IMDMeasurement);
 
     spectrumDisplay.setVisible (wantsSpectrumPath);
     cursorReadout  .setVisible (wantsSpectrumPath);
     thdDisplay     .setVisible (wantsThdPath);
+    imdDisplay     .setVisible (wantsImdPath);
 
     // The alias-view toggle row lives inside SpectrumDisplay (it's tied to
     // a specific mode within the shared spectrum panel) but its visibility
@@ -101,6 +105,10 @@ void WTAnalyzerAudioProcessorEditor::applyAnalysisMode (int modeIndex)
         case Mode::AliasingDetection:
             captionText = "High-frequency sine sweep (4-20 kHz). "
                           "Saw or square sweeps fold more harmonics into the alias zone.";
+            break;
+        case Mode::IMDMeasurement:
+            captionText = "Two pure sines. SMPTE (60 Hz + 7 kHz) or CCIF (19 + 20 kHz) "
+                          "are the canonical tests; any two distinct tones work.";
             break;
     }
 
@@ -139,6 +147,7 @@ void WTAnalyzerAudioProcessorEditor::resized()
     spectrumDisplay .setUiScale (s);
     cursorReadout   .setUiScale (s);
     thdDisplay      .setUiScale (s);
+    imdDisplay      .setUiScale (s);
     levelMetersPanel.setUiScale (s);
     latencyPanel    .setUiScale (s);
 
@@ -169,7 +178,8 @@ void WTAnalyzerAudioProcessorEditor::resized()
     cursorReadout.setBounds (readoutStrip.removeFromLeft (sx (220)));
     bounds.removeFromBottom (sx (4));
 
-    // Spectrum and THD share the same rect; visibility decides which is drawn.
+    // Spectrum, THD and IMD share the same rect; visibility decides which is drawn.
     spectrumDisplay.setBounds (bounds);
     thdDisplay     .setBounds (bounds);
+    imdDisplay     .setBounds (bounds);
 }

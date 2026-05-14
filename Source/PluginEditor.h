@@ -16,6 +16,7 @@
 #include "SpectrumDisplay.h"
 #include "CursorReadout.h"
 #include "THDDisplay.h"
+#include "IMDDisplay.h"
 #include "LevelMetersPanel.h"
 #include "LatencyPanel.h"
 
@@ -86,6 +87,9 @@ private:
 
     // THD-mode display path.
     THDDisplay       thdDisplay;
+
+    // IMD-mode display path.
+    IMDDisplay       imdDisplay;
 
     LevelMetersPanel levelMetersPanel;
     LatencyPanel     latencyPanel;

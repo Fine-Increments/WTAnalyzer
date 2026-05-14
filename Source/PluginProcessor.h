@@ -12,6 +12,7 @@
 #include "Analyses/FrequencyResponse.h"
 #include "Analyses/THDMeasurement.h"
 #include "Analyses/AliasingDetection.h"
+#include "Analyses/IMDMeasurement.h"
 
 //==============================================================================
 /**
@@ -123,7 +124,8 @@ public:
         GenericOverlay    = 0,
         FrequencyResponse = 1,
         THDMeasurement    = 2,
-        AliasingDetection = 3
+        AliasingDetection = 3,
+        IMDMeasurement    = 4
     };
 
     // First analysis: derived from the existing pre/post spectrum FFT.
@@ -139,6 +141,11 @@ public:
     // existing pre/post spectrum FFT output; peak-holds off-grid added
     // energy so a sweep accumulates the full aliasing picture.
     AliasingDetection aliasingDetection;
+
+    // Fourth analysis: intermodulation distortion from a two-tone input.
+    // Same DSP-source pattern as THDMeasurement: consumes the existing
+    // spectrum FFT output and produces per-product readouts.
+    IMDMeasurement imdMeasurement;
 
 private:
     //==============================================================================

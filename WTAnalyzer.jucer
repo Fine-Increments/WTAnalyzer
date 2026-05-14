@@ -29,6 +29,10 @@
             file="Source/THDDisplay.cpp"/>
       <FILE id="THDsp2" name="THDDisplay.h" compile="0" resource="0"
             file="Source/THDDisplay.h"/>
+      <FILE id="IMDsp1" name="IMDDisplay.cpp" compile="1" resource="0"
+            file="Source/IMDDisplay.cpp"/>
+      <FILE id="IMDsp2" name="IMDDisplay.h" compile="0" resource="0"
+            file="Source/IMDDisplay.h"/>
       <FILE id="LMet01" name="LevelMetersPanel.cpp" compile="1" resource="0"
             file="Source/LevelMetersPanel.cpp"/>
       <FILE id="LMet02" name="LevelMetersPanel.h" compile="0" resource="0"
@@ -50,6 +54,10 @@
               file="Source/Analyses/AliasingDetection.cpp"/>
         <FILE id="Alis02" name="AliasingDetection.h" compile="0" resource="0"
               file="Source/Analyses/AliasingDetection.h"/>
+        <FILE id="ImdM01" name="IMDMeasurement.cpp" compile="1" resource="0"
+              file="Source/Analyses/IMDMeasurement.cpp"/>
+        <FILE id="ImdM02" name="IMDMeasurement.h" compile="0" resource="0"
+              file="Source/Analyses/IMDMeasurement.h"/>
       </GROUP>
     </GROUP>
   </MAINGROUP>
