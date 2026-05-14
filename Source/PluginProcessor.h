@@ -13,6 +13,7 @@
 #include "Analyses/THDMeasurement.h"
 #include "Analyses/AliasingDetection.h"
 #include "Analyses/IMDMeasurement.h"
+#include "Analyses/ImpulseResponse.h"
 
 //==============================================================================
 /**
@@ -125,7 +126,8 @@ public:
         FrequencyResponse = 1,
         THDMeasurement    = 2,
         AliasingDetection = 3,
-        IMDMeasurement    = 4
+        IMDMeasurement    = 4,
+        ImpulseResponse   = 5
     };
 
     // First analysis: derived from the existing pre/post spectrum FFT.
@@ -146,6 +148,11 @@ public:
     // Same DSP-source pattern as THDMeasurement: consumes the existing
     // spectrum FFT output and produces per-product readouts.
     IMDMeasurement imdMeasurement;
+
+    // Fifth analysis: time-domain impulse response. Operates directly on
+    // raw pre/post audio (not the spectrum FFT) - the first time-domain
+    // analysis in the suite. Trigger-detected, accumulating average.
+    ImpulseResponse impulseResponse;
 
 private:
     //==============================================================================

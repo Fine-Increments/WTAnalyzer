@@ -40,7 +40,7 @@ WTAnalyzerAudioProcessor::createParameterLayout()
         juce::ParameterID { "activeAnalysis", 1 },
         "Active Analysis",
         juce::StringArray { "Generic Overlay", "Frequency Response", "THD Measurement",
-                            "Aliasing Detection", "IMD Measurement" },
+                            "Aliasing Detection", "IMD Measurement", "Impulse Response" },
         0));
 
     // Level meter mode: false = Peak (default, matches DAW meter behaviour),
@@ -88,6 +88,24 @@ WTAnalyzerAudioProcessor::createParameterLayout()
         juce::ParameterID { "imdHzLayout", 1 },
         "IMD Bars by Hz",
         false));
+
+    // Impulse-response window length in milliseconds. Maximum is 120000
+    // (2 minutes) to accommodate supermassive-style reverb tails.
+    layout.add (std::make_unique<juce::AudioParameterInt> (
+        juce::ParameterID { "irWindowMs", 1 },
+        "IR Window (ms)",
+        ImpulseResponse::kMinWindowMs,
+        ImpulseResponse::kMaxWindowMs,
+        ImpulseResponse::kDefaultWindowMs));
+
+    // Number of impulses to average. Higher = lower noise floor in the
+    // captured IR; lower = faster turn-around per test.
+    layout.add (std::make_unique<juce::AudioParameterInt> (
+        juce::ParameterID { "irAverageCount", 1 },
+        "IR Average Count",
+        ImpulseResponse::kMinAverages,
+        ImpulseResponse::kMaxAverages,
+        ImpulseResponse::kDefaultAverages));
 
     return layout;
 }
@@ -188,6 +206,9 @@ void WTAnalyzerAudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
     thdMeasurement   .prepare (kSpectrumBins, binFreqScale);
     aliasingDetection.prepare (kSpectrumBins, binFreqScale);
     imdMeasurement   .prepare (kSpectrumBins, binFreqScale);
+    impulseResponse  .prepare (sampleRate, samplesPerBlock);
+    impulseResponse  .setWindowMs    ((int) *apvts.getRawParameterValue ("irWindowMs"));
+    impulseResponse  .setAverageGoal ((int) *apvts.getRawParameterValue ("irAverageCount"));
 
     lastActiveAnalysisIndex = (int) *apvts.getRawParameterValue ("activeAnalysis");
 }
@@ -260,6 +281,7 @@ void WTAnalyzerAudioProcessor::runSpectrumFft()
         thdMeasurement   .reset();
         aliasingDetection.reset();
         imdMeasurement   .reset();
+        impulseResponse  .reset();
         lastActiveAnalysisIndex = activeIndex;
     }
 
@@ -440,7 +462,17 @@ void WTAnalyzerAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
 
     // Spectrum overlay: stream channel 0 of the (delay-compensated) pre and
     // post buses into the circular buffers, and run an FFT every kSpectrumHopSize
-    // samples for 75% overlap.
+    // samples for 75% overlap. Also feed the ImpulseResponse analysis its
+    // per-sample pre/post pair when its mode is active, since IR works on
+    // raw time-domain samples (not the spectrum FFT output).
+    const int activeIndexLocal = (int) *apvts.getRawParameterValue ("activeAnalysis");
+    const bool irActive = activeIndexLocal == (int) AnalysisMode::ImpulseResponse;
+
+    // Poll window / average params each block so UI changes take effect
+    // promptly. Cheap; only invalidates state if values actually changed.
+    impulseResponse.setWindowMs    ((int) *apvts.getRawParameterValue ("irWindowMs"));
+    impulseResponse.setAverageGoal ((int) *apvts.getRawParameterValue ("irAverageCount"));
+
     if (postBus.getNumChannels() > 0)
     {
         const float* preCh0  = preActive ? preBus.getReadPointer (0) : nullptr;
@@ -459,6 +491,9 @@ void WTAnalyzerAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                 runSpectrumFft();
                 samplesSinceLastSpectrumFft = 0;
             }
+
+            if (irActive)
+                impulseResponse.processSample (preCh0 ? preCh0[n] : 0.0f, postCh0[n]);
         }
     }
 

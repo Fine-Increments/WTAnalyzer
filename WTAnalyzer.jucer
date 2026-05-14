@@ -33,6 +33,10 @@
             file="Source/IMDDisplay.cpp"/>
       <FILE id="IMDsp2" name="IMDDisplay.h" compile="0" resource="0"
             file="Source/IMDDisplay.h"/>
+      <FILE id="IRsp01" name="ImpulseDisplay.cpp" compile="1" resource="0"
+            file="Source/ImpulseDisplay.cpp"/>
+      <FILE id="IRsp02" name="ImpulseDisplay.h" compile="0" resource="0"
+            file="Source/ImpulseDisplay.h"/>
       <FILE id="LMet01" name="LevelMetersPanel.cpp" compile="1" resource="0"
             file="Source/LevelMetersPanel.cpp"/>
       <FILE id="LMet02" name="LevelMetersPanel.h" compile="0" resource="0"
@@ -58,6 +62,10 @@
               file="Source/Analyses/IMDMeasurement.cpp"/>
         <FILE id="ImdM02" name="IMDMeasurement.h" compile="0" resource="0"
               file="Source/Analyses/IMDMeasurement.h"/>
+        <FILE id="ImpR01" name="ImpulseResponse.cpp" compile="1" resource="0"
+              file="Source/Analyses/ImpulseResponse.cpp"/>
+        <FILE id="ImpR02" name="ImpulseResponse.h" compile="0" resource="0"
+              file="Source/Analyses/ImpulseResponse.h"/>
       </GROUP>
     </GROUP>
   </MAINGROUP>

@@ -17,6 +17,7 @@
 #include "CursorReadout.h"
 #include "THDDisplay.h"
 #include "IMDDisplay.h"
+#include "ImpulseDisplay.h"
 #include "LevelMetersPanel.h"
 #include "LatencyPanel.h"
 
@@ -90,6 +91,9 @@ private:
 
     // IMD-mode display path.
     IMDDisplay       imdDisplay;
+
+    // Impulse Response display path. First time-domain panel.
+    ImpulseDisplay   impulseDisplay;
 
     LevelMetersPanel levelMetersPanel;
     LatencyPanel     latencyPanel;

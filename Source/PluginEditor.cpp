@@ -17,6 +17,7 @@ WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioP
       cursorReadout        (spectrumDisplay),
       thdDisplay           (p),
       imdDisplay           (p),
+      impulseDisplay       (p),
       levelMetersPanel     (p),
       latencyPanel         (p)
 {
@@ -26,6 +27,7 @@ WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioP
     addAndMakeVisible (cursorReadout);
     addChildComponent (thdDisplay);     // hidden by default; applyAnalysisMode shows it
     addChildComponent (imdDisplay);
+    addChildComponent (impulseDisplay);
     addAndMakeVisible (levelMetersPanel);
     addAndMakeVisible (latencyPanel);
 
@@ -75,11 +77,13 @@ void WTAnalyzerAudioProcessorEditor::applyAnalysisMode (int modeIndex)
                                   || modeIndex == (int) Mode::AliasingDetection);
     const bool wantsThdPath      = (modeIndex == (int) Mode::THDMeasurement);
     const bool wantsImdPath      = (modeIndex == (int) Mode::IMDMeasurement);
+    const bool wantsIrPath       = (modeIndex == (int) Mode::ImpulseResponse);
 
     spectrumDisplay.setVisible (wantsSpectrumPath);
     cursorReadout  .setVisible (wantsSpectrumPath);
     thdDisplay     .setVisible (wantsThdPath);
     imdDisplay     .setVisible (wantsImdPath);
+    impulseDisplay .setVisible (wantsIrPath);
 
     // The alias-view toggle row lives inside SpectrumDisplay (it's tied to
     // a specific mode within the shared spectrum panel) but its visibility
@@ -109,6 +113,10 @@ void WTAnalyzerAudioProcessorEditor::applyAnalysisMode (int modeIndex)
         case Mode::IMDMeasurement:
             captionText = "Two pure sines. SMPTE (60 Hz + 7 kHz) or CCIF (19 + 20 kHz) "
                           "are the canonical tests; any two distinct tones work.";
+            break;
+        case Mode::ImpulseResponse:
+            captionText = "Periodic impulse train. Use scripts/impulse.py; "
+                          "set impulse period longer than the device's tail.";
             break;
     }
 
@@ -148,6 +156,7 @@ void WTAnalyzerAudioProcessorEditor::resized()
     cursorReadout   .setUiScale (s);
     thdDisplay      .setUiScale (s);
     imdDisplay      .setUiScale (s);
+    impulseDisplay  .setUiScale (s);
     levelMetersPanel.setUiScale (s);
     latencyPanel    .setUiScale (s);
 
@@ -178,8 +187,9 @@ void WTAnalyzerAudioProcessorEditor::resized()
     cursorReadout.setBounds (readoutStrip.removeFromLeft (sx (220)));
     bounds.removeFromBottom (sx (4));
 
-    // Spectrum, THD and IMD share the same rect; visibility decides which is drawn.
+    // Spectrum, THD, IMD and IR share the same rect; visibility decides which is drawn.
     spectrumDisplay.setBounds (bounds);
     thdDisplay     .setBounds (bounds);
     imdDisplay     .setBounds (bounds);
+    impulseDisplay .setBounds (bounds);
 }
