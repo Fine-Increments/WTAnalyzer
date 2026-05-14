@@ -14,6 +14,7 @@
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
 #include "SpectrumDisplay.h"
+#include "CursorReadout.h"
 #include "LevelMetersPanel.h"
 #include "LatencyPanel.h"
 
@@ -75,6 +76,7 @@ private:
     WTLookAndFeel lookAndFeel;
 
     SpectrumDisplay  spectrumDisplay;
+    CursorReadout    cursorReadout;
     LevelMetersPanel levelMetersPanel;
     LatencyPanel     latencyPanel;
 

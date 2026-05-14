@@ -16,10 +16,15 @@
       <FILE id="LPgwQC" name="PluginEditor.cpp" compile="1" resource="0"
             file="Source/PluginEditor.cpp"/>
       <FILE id="LrdPgt" name="PluginEditor.h" compile="0" resource="0" file="Source/PluginEditor.h"/>
+      <FILE id="Color1" name="Colors.h" compile="0" resource="0" file="Source/Colors.h"/>
       <FILE id="SDsp01" name="SpectrumDisplay.cpp" compile="1" resource="0"
             file="Source/SpectrumDisplay.cpp"/>
       <FILE id="SDsp02" name="SpectrumDisplay.h" compile="0" resource="0"
             file="Source/SpectrumDisplay.h"/>
+      <FILE id="CrRd01" name="CursorReadout.cpp" compile="1" resource="0"
+            file="Source/CursorReadout.cpp"/>
+      <FILE id="CrRd02" name="CursorReadout.h" compile="0" resource="0"
+            file="Source/CursorReadout.h"/>
       <FILE id="LMet01" name="LevelMetersPanel.cpp" compile="1" resource="0"
             file="Source/LevelMetersPanel.cpp"/>
       <FILE id="LMet02" name="LevelMetersPanel.h" compile="0" resource="0"

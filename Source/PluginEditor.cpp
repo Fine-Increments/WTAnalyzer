@@ -14,12 +14,14 @@ WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioP
     : AudioProcessorEditor (&p),
       audioProcessor       (p),
       spectrumDisplay      (p),
+      cursorReadout        (spectrumDisplay),
       levelMetersPanel     (p),
       latencyPanel         (p)
 {
     setLookAndFeel (&lookAndFeel);
 
     addAndMakeVisible (spectrumDisplay);
+    addAndMakeVisible (cursorReadout);
     addAndMakeVisible (levelMetersPanel);
     addAndMakeVisible (latencyPanel);
 
@@ -68,6 +70,7 @@ void WTAnalyzerAudioProcessorEditor::resized()
     const float s = scale();
     lookAndFeel.setUiScale (s);
     spectrumDisplay .setUiScale (s);
+    cursorReadout   .setUiScale (s);
     levelMetersPanel.setUiScale (s);
     latencyPanel    .setUiScale (s);
 
@@ -83,9 +86,14 @@ void WTAnalyzerAudioProcessorEditor::resized()
     latencyPanel.setBounds (bounds.removeFromBottom (sx (30)));
     bounds.removeFromBottom (sx (12));
 
-    const int metersHeight = sx (40) + sx (4) + sx (40);  // post + gap + pre
+    const int metersHeight = sx (40) + sx (20) + sx (40);  // post + scale strip + pre
     levelMetersPanel.setBounds (bounds.removeFromBottom (metersHeight));
-    bounds.removeFromBottom (sx (12));
+
+    // Readout strip between spectrum and meters: left-aligned cursor coords,
+    // replaces the prior empty gap.
+    auto readoutStrip = bounds.removeFromBottom (sx (18));
+    cursorReadout.setBounds (readoutStrip.removeFromLeft (sx (220)));
+    bounds.removeFromBottom (sx (4));
 
     spectrumDisplay.setBounds (bounds);
 }

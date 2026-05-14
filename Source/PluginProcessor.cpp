@@ -42,6 +42,13 @@ WTAnalyzerAudioProcessor::createParameterLayout()
         juce::StringArray { "Generic Overlay", "Frequency Response" },
         0));
 
+    // Level meter mode: false = Peak (default, matches DAW meter behaviour),
+    // true = RMS (averaged level, useful for sustained material).
+    layout.add (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { "meterUseRms", 1 },
+        "Use RMS Meter",
+        false));
+
     return layout;
 }
 
@@ -350,20 +357,31 @@ void WTAnalyzerAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
         preDelayLine.process (juce::dsp::ProcessContextReplacing<float> (preBlock));
     }
 
-    auto rmsToDb = [] (float rms)
+    auto gainToDb = [] (float gain)
     {
-        return juce::Decibels::gainToDecibels (rms, -100.0f);
+        return juce::Decibels::gainToDecibels (gain, -100.0f);
     };
 
     if (postBus.getNumChannels() > 0)
-        postEffectLevelDb.store (rmsToDb (postBus.getRMSLevel (0, 0, numSamples)),
+    {
+        postEffectLevelDb.store (gainToDb (postBus.getRMSLevel  (0, 0, numSamples)),
                                  std::memory_order_relaxed);
+        postEffectPeakDb .store (gainToDb (postBus.getMagnitude (0, 0, numSamples)),
+                                 std::memory_order_relaxed);
+    }
 
     if (preActive)
-        preEffectLevelDb.store (rmsToDb (preBus.getRMSLevel (0, 0, numSamples)),
+    {
+        preEffectLevelDb.store (gainToDb (preBus.getRMSLevel  (0, 0, numSamples)),
                                 std::memory_order_relaxed);
+        preEffectPeakDb .store (gainToDb (preBus.getMagnitude (0, 0, numSamples)),
+                                std::memory_order_relaxed);
+    }
     else
+    {
         preEffectLevelDb.store (-100.0f, std::memory_order_relaxed);
+        preEffectPeakDb .store (-100.0f, std::memory_order_relaxed);
+    }
 
     // Spectrum overlay: stream channel 0 of the (delay-compensated) pre and
     // post buses into the circular buffers, and run an FFT every kSpectrumHopSize

@@ -24,6 +24,7 @@ public:
     void setUiScale (float newScale) noexcept;
 
     void paint (juce::Graphics&) override;
+    void resized() override;
 
 private:
     void timerCallback() override;
@@ -32,10 +33,23 @@ private:
     float sf (float v) const noexcept { return v * uiScale; }
 
     void drawMeter (juce::Graphics& g, juce::Rectangle<int> row,
-                    const juce::String& label, float db, bool active);
+                    const juce::String& label, juce::Colour labelColour,
+                    float db, bool active);
+
+    // Labelled dB scale drawn between the post and pre meters; tick marks
+    // line up vertically with the level positions in both bars.
+    void drawLevelScale (juce::Graphics& g, juce::Rectangle<int> row);
 
     WTAnalyzerAudioProcessor& processor;
     float uiScale = 1.0f;
+
+    // Peak/RMS mode toggle. Lives in the left portion of the scale strip;
+    // attached to the meterUseRms APVTS parameter so the choice persists
+    // and is host-automatable.
+    juce::TextButton meterModeButton;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> meterModeAttachment;
+
+    void updateMeterModeButtonText();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LevelMetersPanel)
 };

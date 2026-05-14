@@ -52,12 +52,17 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
-    // Per-block RMS readouts for the editor's routing-check meters.
-    // dB scale; -100.0f represents silence / inactive bus.
+    // Per-block level readouts for the editor's meters. dB scale; -100.0f
+    // represents silence / inactive bus. Both peak (max abs sample) and RMS
+    // are computed every block; the editor reads whichever the user selects
+    // via the meterUseRms APVTS parameter.
+    //
     // preBusActive tracks whether the sidechain (pre-effect) input is wired;
     // the main (post-effect) input is always present when the plugin is running.
     std::atomic<float> preEffectLevelDb  { -100.0f };
     std::atomic<float> postEffectLevelDb { -100.0f };
+    std::atomic<float> preEffectPeakDb   { -100.0f };
+    std::atomic<float> postEffectPeakDb  { -100.0f };
     std::atomic<bool>  preBusActive      { false };
 
     // Upper bound on pre-effect delay (samples). At 48 kHz this is ~340 ms,
