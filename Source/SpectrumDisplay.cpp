@@ -104,6 +104,15 @@ void SpectrumDisplay::syncAliasingViewButtons()
     aliasingCompositeButton.setToggleState (idx == 0, juce::dontSendNotification);
     aliasingPreButton      .setToggleState (idx == 1, juce::dontSendNotification);
     aliasingPostButton     .setToggleState (idx == 2, juce::dontSendNotification);
+
+    // Hold/Clear apply only to the Composite view; hide them on Pre/Post.
+    // Stay invisible entirely when the view-toggle buttons themselves are
+    // hidden (i.e. when we're not in AliasingDetection mode).
+    const bool inAliasingMode = aliasingCompositeButton.isVisible()
+                             || aliasingPreButton.isVisible()
+                             || aliasingPostButton.isVisible();
+    aliasingHoldButton .setVisible (inAliasingMode && idx == 0);
+    aliasingClearButton.setVisible (inAliasingMode && idx == 0);
 }
 
 int SpectrumDisplay::aliasingViewIndex() const noexcept
@@ -116,8 +125,14 @@ void SpectrumDisplay::setAliasingViewButtonsVisible (bool shouldBeVisible)
     aliasingCompositeButton.setVisible (shouldBeVisible);
     aliasingPreButton      .setVisible (shouldBeVisible);
     aliasingPostButton     .setVisible (shouldBeVisible);
-    aliasingHoldButton     .setVisible (shouldBeVisible);
-    aliasingClearButton    .setVisible (shouldBeVisible);
+
+    // Hold/Clear are meaningful only in Composite view (they operate on
+    // the green differential trace, which only that view draws). The
+    // parameter listener and syncAliasingViewButtons() pick up the
+    // additional Composite-vs-not check.
+    const bool wantsCaptureControls = shouldBeVisible && aliasingViewIndex() == 0;
+    aliasingHoldButton .setVisible (wantsCaptureControls);
+    aliasingClearButton.setVisible (wantsCaptureControls);
 }
 
 void SpectrumDisplay::layoutAliasingViewButtons (juce::Rectangle<int> plotArea)
@@ -498,21 +513,13 @@ void SpectrumDisplay::paint (juce::Graphics& g)
             plotTrace (processor.preSpectrumDb,  WTColors::preEffect);
             plotTrace (processor.postSpectrumDb, WTColors::postEffect);
         }
-        else if (aliasView == 1)   // Pre
+        else if (aliasView == 1)   // Pre - always live, Hold doesn't apply
         {
-            if (isAliasingHolding)
-                plotSparseTrace (processor.aliasingDetection.getPeakPreDb().data(), N,
-                                 WTColors::preEffect, 1.2f);
-            else
-                plotTrace (processor.preSpectrumDb, WTColors::preEffect);
+            plotTrace (processor.preSpectrumDb, WTColors::preEffect);
         }
-        else if (aliasView == 2)   // Post
+        else if (aliasView == 2)   // Post - always live, Hold doesn't apply
         {
-            if (isAliasingHolding)
-                plotSparseTrace (processor.aliasingDetection.getPeakPostDb().data(), N,
-                                 WTColors::postEffect, 1.2f);
-            else
-                plotTrace (processor.postSpectrumDb, WTColors::postEffect);
+            plotTrace (processor.postSpectrumDb, WTColors::postEffect);
         }
 
         // When FrequencyResponse mode is active, overlay the transfer function
@@ -566,11 +573,11 @@ void SpectrumDisplay::paint (juce::Graphics& g)
         // a sweep accumulates the full picture.
         if (inAliasingMode && aliasView == 0)
         {
-            if (isAliasingHolding)
-                plotSparseTrace (processor.aliasingDetection.getPeakPreDb().data(), N,
-                                 WTColors::preEffect, 1.2f);
-            else
-                plotTrace (processor.preSpectrumDb, WTColors::preEffect);
+            // Amber pre trace is always live - Hold only applies to the
+            // green differential, since the user-relevant accumulated
+            // measurement is "what aliasing did the device produce
+            // across the sweep", not "where was the input signal".
+            plotTrace (processor.preSpectrumDb, WTColors::preEffect);
 
             const float* diffSource = isAliasingHolding
                 ? processor.aliasingDetection.getPeakDifferentialDb().data()

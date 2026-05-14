@@ -16,10 +16,11 @@
          introduced, not what was already in the input.
       4. Store the per-frame value (live) and update a peak-hold array.
 
-    The class also peak-holds pre and post spectra independently so the
-    display can offer a "hold" view for those channels when running a sweep
-    test. Peaks are not auto-reset; the display calls clearPeaks() in
-    response to the user's Clear button between test runs.
+    Peak hold is maintained only on the differential, never on the raw
+    pre / post spectra: the user-relevant question is "what aliasing did
+    the device produce" and peak-hold of the channels just clutters the
+    display with sweep trails of the input signal. The display calls
+    clearPeaks() in response to the user's Clear button between sweeps.
 
     Consumes the existing spectrum FFT output; no new DSP path.
 
@@ -72,11 +73,6 @@ public:
     // Peak-hold of the above across frames since the last clear / reset.
     const std::vector<float>& getPeakDifferentialDb() const noexcept { return peakDifferentialDb; }
 
-    // Peak-hold of the raw pre and post spectra. Used by the display
-    // when the user toggles Hold while viewing the Pre or Post trace.
-    const std::vector<float>& getPeakPreDb()  const noexcept { return peakPreDb;  }
-    const std::vector<float>& getPeakPostDb() const noexcept { return peakPostDb; }
-
     int   getNumBins() const noexcept { return (int) peakDifferentialDb.size(); }
 
     // Loudest peak-held differential and its frequency, for the HUD.
@@ -96,6 +92,4 @@ private:
 
     std::vector<float> liveDifferentialDb;
     std::vector<float> peakDifferentialDb;
-    std::vector<float> peakPreDb;
-    std::vector<float> peakPostDb;
 };

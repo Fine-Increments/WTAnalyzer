@@ -18,8 +18,6 @@ void AliasingDetection::prepare (int numBinsIn, float binFrequencyScale)
 
     liveDifferentialDb.assign ((size_t) numBins, kNoMeasurementDb);
     peakDifferentialDb.assign ((size_t) numBins, kNoMeasurementDb);
-    peakPreDb         .assign ((size_t) numBins, kNoMeasurementDb);
-    peakPostDb        .assign ((size_t) numBins, kNoMeasurementDb);
 
     reset();
 }
@@ -34,8 +32,6 @@ void AliasingDetection::reset()
 
     std::fill (liveDifferentialDb.begin(), liveDifferentialDb.end(), kNoMeasurementDb);
     std::fill (peakDifferentialDb.begin(), peakDifferentialDb.end(), kNoMeasurementDb);
-    std::fill (peakPreDb         .begin(), peakPreDb         .end(), kNoMeasurementDb);
-    std::fill (peakPostDb        .begin(), peakPostDb        .end(), kNoMeasurementDb);
 }
 
 void AliasingDetection::clearPeaks()
@@ -44,8 +40,6 @@ void AliasingDetection::clearPeaks()
     peakResidueHz  = 0.0f;
 
     std::fill (peakDifferentialDb.begin(), peakDifferentialDb.end(), kNoMeasurementDb);
-    std::fill (peakPreDb         .begin(), peakPreDb         .end(), kNoMeasurementDb);
-    std::fill (peakPostDb        .begin(), peakPostDb        .end(), kNoMeasurementDb);
     // liveDifferentialDb is regenerated every frame; no need to wipe it
     // and doing so causes a one-frame flicker.
 }
@@ -54,15 +48,6 @@ void AliasingDetection::update (const float* preDb, const float* postDb)
 {
     constexpr float kMinUsefulFreq = 20.0f;
     constexpr float kMaxUsefulFreq = 20000.0f;
-
-    // Peak-hold pre and post spectra independently of fundamental detection
-    // so the Pre / Post views can offer a Hold mode even when the analysis
-    // isn't fully primed.
-    for (int b = 0; b < numBins; ++b)
-    {
-        if (preDb [b] > peakPreDb [(size_t) b]) peakPreDb [(size_t) b] = preDb [b];
-        if (postDb[b] > peakPostDb[(size_t) b]) peakPostDb[(size_t) b] = postDb[b];
-    }
 
     int   peakBin = -1;
     float peakDb  = -1000.0f;
