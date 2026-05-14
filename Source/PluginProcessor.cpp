@@ -49,6 +49,16 @@ WTAnalyzerAudioProcessor::createParameterLayout()
         "Use RMS Meter",
         false));
 
+    // THD bars view: which harmonic-bar visualisation to show. Differential
+    // (default) shows added energy per harmonic; Pre/Post show each signal's
+    // classical own-fundamental-referenced harmonic content. The THD%
+    // readout itself is always the differential value regardless of view.
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { "thdBarsView", 1 },
+        "THD Bars View",
+        juce::StringArray { "Differential", "Pre", "Post" },
+        0));
+
     return layout;
 }
 
