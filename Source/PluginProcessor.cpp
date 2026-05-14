@@ -39,7 +39,8 @@ WTAnalyzerAudioProcessor::createParameterLayout()
     layout.add (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { "activeAnalysis", 1 },
         "Active Analysis",
-        juce::StringArray { "Generic Overlay", "Frequency Response", "THD Measurement" },
+        juce::StringArray { "Generic Overlay", "Frequency Response", "THD Measurement",
+                            "Aliasing Detection" },
         0));
 
     // Level meter mode: false = Peak (default, matches DAW meter behaviour),
@@ -57,6 +58,16 @@ WTAnalyzerAudioProcessor::createParameterLayout()
         juce::ParameterID { "thdBarsView", 1 },
         "THD Bars View",
         juce::StringArray { "Differential", "Pre", "Post" },
+        0));
+
+    // Aliasing view: Composite (default) shows post decomposed - on-grid
+    // bins in the pre channel colour, off-grid bins (the aliases) in the
+    // analysis colour. Pre / Post show the respective channel trace alone
+    // for sanity-checking the underlying signals.
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { "aliasingView", 1 },
+        "Aliasing View",
+        juce::StringArray { "Composite", "Pre", "Post" },
         0));
 
     return layout;
@@ -155,7 +166,8 @@ void WTAnalyzerAudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
     frequencyResponse.prepare (kSpectrumBins);
 
     const float binFreqScale = (float) sampleRate / (float) kSpectrumFftSize;
-    thdMeasurement.prepare (kSpectrumBins, binFreqScale);
+    thdMeasurement   .prepare (kSpectrumBins, binFreqScale);
+    aliasingDetection.prepare (kSpectrumBins, binFreqScale);
 
     lastActiveAnalysisIndex = (int) *apvts.getRawParameterValue ("activeAnalysis");
 }
@@ -226,6 +238,7 @@ void WTAnalyzerAudioProcessor::runSpectrumFft()
     {
         frequencyResponse.reset();
         thdMeasurement   .reset();
+        aliasingDetection.reset();
         lastActiveAnalysisIndex = activeIndex;
     }
 
@@ -233,6 +246,8 @@ void WTAnalyzerAudioProcessor::runSpectrumFft()
         frequencyResponse.update (preSpectrumDb.data(), postSpectrumDb.data());
     else if (activeIndex == (int) AnalysisMode::THDMeasurement)
         thdMeasurement.update (preSpectrumDb.data(), postSpectrumDb.data());
+    else if (activeIndex == (int) AnalysisMode::AliasingDetection)
+        aliasingDetection.update (preSpectrumDb.data(), postSpectrumDb.data());
 
     spectrumFrameCount.fetch_add (1, std::memory_order_release);
 }

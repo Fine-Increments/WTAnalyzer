@@ -95,5 +95,14 @@ private:
     juce::ComboBox analysisSelector;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> analysisAttachment;
 
+    // Brief one-line caption describing what input the active analysis
+    // expects (including useful non-standard inputs). The string is set by
+    // applyAnalysisMode and rendered in paint() inside captionBounds, which
+    // resized() positions on the right half of the cursor-readout strip.
+    // Every analysis mode must populate this - see the carve-out in
+    // feedback-ui-no-instructions memory.
+    juce::String          captionText;
+    juce::Rectangle<int>  captionBounds;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (WTAnalyzerAudioProcessorEditor)
 };

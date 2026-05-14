@@ -11,6 +11,7 @@
 #include <JuceHeader.h>
 #include "Analyses/FrequencyResponse.h"
 #include "Analyses/THDMeasurement.h"
+#include "Analyses/AliasingDetection.h"
 
 //==============================================================================
 /**
@@ -121,7 +122,8 @@ public:
     {
         GenericOverlay    = 0,
         FrequencyResponse = 1,
-        THDMeasurement    = 2
+        THDMeasurement    = 2,
+        AliasingDetection = 3
     };
 
     // First analysis: derived from the existing pre/post spectrum FFT.
@@ -132,6 +134,11 @@ public:
     // FrequencyResponse, consumes the existing spectrum FFT output and
     // produces a derived measurement - no new DSP stream.
     THDMeasurement thdMeasurement;
+
+    // Third analysis: per-bin alias residue across a sweep. Consumes the
+    // existing pre/post spectrum FFT output; peak-holds off-grid added
+    // energy so a sweep accumulates the full aliasing picture.
+    AliasingDetection aliasingDetection;
 
 private:
     //==============================================================================

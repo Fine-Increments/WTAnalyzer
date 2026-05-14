@@ -9,6 +9,7 @@
 #include "SpectrumDisplay.h"
 #include "Colors.h"
 #include "Analyses/FrequencyResponse.h"
+#include "Analyses/AliasingDetection.h"
 
 SpectrumDisplay::SpectrumDisplay (WTAnalyzerAudioProcessor& proc)
     : processor (proc)
@@ -20,21 +21,123 @@ SpectrumDisplay::SpectrumDisplay (WTAnalyzerAudioProcessor& proc)
     // It will be re-clamped on every paint in case the host changes sample
     // rate while the editor is open.
     viewMaxFreq = processor.currentSampleRate.load (std::memory_order_relaxed) * 0.5f;
+
+    auto configureAliasingViewButton = [this] (juce::TextButton& b, int paramIndex)
+    {
+        addChildComponent (b);
+        b.setClickingTogglesState (true);
+        b.setRadioGroupId (2, juce::dontSendNotification);
+        b.onClick = [this, paramIndex]
+        {
+            if (auto* p = processor.apvts.getParameter ("aliasingView"))
+                p->setValueNotifyingHost (p->convertTo0to1 ((float) paramIndex));
+        };
+    };
+
+    configureAliasingViewButton (aliasingCompositeButton, 0);
+    configureAliasingViewButton (aliasingPreButton,       1);
+    configureAliasingViewButton (aliasingPostButton,      2);
+
+    // Hold toggles peak-hold rendering for whichever view is active.
+    // Neutral light-grey engaged colour, matching the THD pattern.
+    const juce::Colour engagedFill (0xffcfd2d6);
+    addChildComponent (aliasingHoldButton);
+    aliasingHoldButton.setClickingTogglesState (true);
+    aliasingHoldButton.setColour (juce::TextButton::buttonOnColourId, engagedFill);
+    aliasingHoldButton.setColour (juce::TextButton::textColourOnId,   juce::Colours::black);
+    aliasingHoldButton.onClick = [this]
+    {
+        isAliasingHolding = aliasingHoldButton.getToggleState();
+        repaint();
+    };
+
+    // Clear is momentary; wipes the peak-held arrays so a fresh sweep
+    // can be captured.
+    addChildComponent (aliasingClearButton);
+    aliasingClearButton.onClick = [this]
+    {
+        processor.aliasingDetection.clearPeaks();
+        repaint();
+    };
+
+    processor.apvts.addParameterListener ("aliasingView", this);
+    syncAliasingViewButtons();
 }
 
 SpectrumDisplay::~SpectrumDisplay()
 {
     stopTimer();
+    processor.apvts.removeParameterListener ("aliasingView", this);
 }
 
 void SpectrumDisplay::setUiScale (float newScale) noexcept
 {
     uiScale = newScale;
+    resized();
+}
+
+void SpectrumDisplay::resized()
+{
+    layoutAliasingViewButtons (getPlotArea());
 }
 
 void SpectrumDisplay::timerCallback()
 {
     repaint();
+}
+
+void SpectrumDisplay::parameterChanged (const juce::String& parameterID, float /*newValue*/)
+{
+    if (parameterID == "aliasingView")
+    {
+        juce::MessageManager::callAsync ([this]
+        {
+            syncAliasingViewButtons();
+            repaint();
+        });
+    }
+}
+
+void SpectrumDisplay::syncAliasingViewButtons()
+{
+    const int idx = aliasingViewIndex();
+    aliasingCompositeButton.setToggleState (idx == 0, juce::dontSendNotification);
+    aliasingPreButton      .setToggleState (idx == 1, juce::dontSendNotification);
+    aliasingPostButton     .setToggleState (idx == 2, juce::dontSendNotification);
+}
+
+int SpectrumDisplay::aliasingViewIndex() const noexcept
+{
+    return (int) *processor.apvts.getRawParameterValue ("aliasingView");
+}
+
+void SpectrumDisplay::setAliasingViewButtonsVisible (bool shouldBeVisible)
+{
+    aliasingCompositeButton.setVisible (shouldBeVisible);
+    aliasingPreButton      .setVisible (shouldBeVisible);
+    aliasingPostButton     .setVisible (shouldBeVisible);
+    aliasingHoldButton     .setVisible (shouldBeVisible);
+    aliasingClearButton    .setVisible (shouldBeVisible);
+}
+
+void SpectrumDisplay::layoutAliasingViewButtons (juce::Rectangle<int> plotArea)
+{
+    const int viewW    = sx (66);
+    const int ctrlW    = sx (58);
+    const int buttonH  = sx (20);
+    const int spacing  = sx (6);
+    const int groupGap = sx (20);
+
+    const int startX = plotArea.getX() + sx (8);
+    const int buttonY = plotArea.getY() + sx (8);
+
+    aliasingCompositeButton.setBounds (startX,                          buttonY, viewW, buttonH);
+    aliasingPreButton      .setBounds (startX +     (viewW + spacing), buttonY, viewW, buttonH);
+    aliasingPostButton     .setBounds (startX + 2 * (viewW + spacing), buttonY, viewW, buttonH);
+
+    const int controlX = startX + 3 * viewW + 2 * spacing + groupGap;
+    aliasingHoldButton .setBounds (controlX,                   buttonY, ctrlW, buttonH);
+    aliasingClearButton.setBounds (controlX + ctrlW + spacing, buttonY, ctrlW, buttonH);
 }
 
 juce::Rectangle<int> SpectrumDisplay::getPlotArea() const noexcept
@@ -317,12 +420,12 @@ void SpectrumDisplay::paint (juce::Graphics& g)
         juce::Graphics::ScopedSaveState clipScope (g);
         g.reduceClipRegion (plotArea);
 
+        const float binFreqScale = sr / (float) WTAnalyzerAudioProcessor::kSpectrumFftSize;
+        const int   N            = WTAnalyzerAudioProcessor::kSpectrumBins;
+
         auto plotTrace = [&] (const std::array<float, WTAnalyzerAudioProcessor::kSpectrumBins>& spec,
                               juce::Colour colour)
         {
-            const int   N            = WTAnalyzerAudioProcessor::kSpectrumBins;
-            const float binFreqScale = sr / (float) WTAnalyzerAudioProcessor::kSpectrumFftSize;
-
             juce::Path path;
             bool       first = true;
 
@@ -344,13 +447,77 @@ void SpectrumDisplay::paint (juce::Graphics& g)
             g.strokePath (path, juce::PathStrokeType (sf (1.2f)));
         };
 
-        plotTrace (processor.preSpectrumDb,  WTColors::preEffect);
-        plotTrace (processor.postSpectrumDb, WTColors::postEffect);
+        // Plots data that uses kNoMeasurementDb as a sentinel for "no value
+        // here" - the path breaks at those bins instead of drawing through
+        // them as a floor value. Used for peak-held arrays and the live
+        // differential, all of which can be sparse.
+        auto plotSparseTrace = [&] (const float* values, int count,
+                                    juce::Colour colour, float strokeW)
+        {
+            juce::Path path;
+            bool       hasOpenSubPath = false;
+
+            for (int bin = 1; bin < count; ++bin)
+            {
+                const float f = (float) bin * binFreqScale;
+                if (f < viewMinFreq) continue;
+                if (f > viewMaxFreq) break;
+
+                const float v = values[bin];
+                if (v <= AliasingDetection::kNoMeasurementDb + 0.5f)
+                {
+                    hasOpenSubPath = false;
+                    continue;
+                }
+
+                const float clampedDb = juce::jlimit (viewMinDb, viewMaxDb, v);
+                const float x = freqToX (f);
+                const float y = dbToY (clampedDb);
+
+                if (! hasOpenSubPath) { path.startNewSubPath (x, y); hasOpenSubPath = true; }
+                else                  { path.lineTo          (x, y); }
+            }
+
+            g.setColour (colour);
+            g.strokePath (path, juce::PathStrokeType (sf (strokeW)));
+        };
+
+        const int activeAnalysisIdx = (int) *processor.apvts.getRawParameterValue ("activeAnalysis");
+        const bool inAliasingMode  = activeAnalysisIdx
+                                  == (int) WTAnalyzerAudioProcessor::AnalysisMode::AliasingDetection;
+        const int aliasView = inAliasingMode ? aliasingViewIndex() : 0;
+
+        // Outside AliasingDetection mode the universal pre + post overlay
+        // applies (live, no Hold). Inside AliasingDetection the view
+        // toggle (Composite / Pre / Post) plus the Hold toggle decide
+        // which data renders. Hold pulls from the peak-held arrays the
+        // AliasingDetection class maintains; live pulls from the
+        // processor's spectrum arrays directly.
+        if (! inAliasingMode)
+        {
+            plotTrace (processor.preSpectrumDb,  WTColors::preEffect);
+            plotTrace (processor.postSpectrumDb, WTColors::postEffect);
+        }
+        else if (aliasView == 1)   // Pre
+        {
+            if (isAliasingHolding)
+                plotSparseTrace (processor.aliasingDetection.getPeakPreDb().data(), N,
+                                 WTColors::preEffect, 1.2f);
+            else
+                plotTrace (processor.preSpectrumDb, WTColors::preEffect);
+        }
+        else if (aliasView == 2)   // Post
+        {
+            if (isAliasingHolding)
+                plotSparseTrace (processor.aliasingDetection.getPeakPostDb().data(), N,
+                                 WTColors::postEffect, 1.2f);
+            else
+                plotTrace (processor.postSpectrumDb, WTColors::postEffect);
+        }
 
         // When FrequencyResponse mode is active, overlay the transfer function
         // trace. Bins flagged as "no measurement" (pre too quiet) break the path
         // so the curve doesn't fake a value where none exists.
-        const int activeAnalysisIdx = (int) *processor.apvts.getRawParameterValue ("activeAnalysis");
         if (activeAnalysisIdx == (int) WTAnalyzerAudioProcessor::AnalysisMode::FrequencyResponse)
         {
             const auto& response = processor.frequencyResponse.getResponseDb();
@@ -382,8 +549,65 @@ void SpectrumDisplay::paint (juce::Graphics& g)
                 else                  { path.lineTo          (x, y); }
             }
 
-            g.setColour (WTColors::frequencyResponse);
+            g.setColour (WTColors::analysis);
             g.strokePath (path, juce::PathStrokeType (sf (1.6f)));
+        }
+
+        // AliasingDetection composite view: the input signal (pre)
+        // drawn as-is in the pre channel colour, with the green
+        // differential overlay sitting on top to mark only what the
+        // device added. For a transparent device the green is empty
+        // and the composite visually matches the Pre view; any green
+        // that appears is strictly the effect-under-test's
+        // contribution because pre's own aliasing is subtracted out
+        // by the (post^2 - pre^2) math.
+        //
+        // Hold swaps both traces to their peak-held counterparts so
+        // a sweep accumulates the full picture.
+        if (inAliasingMode && aliasView == 0)
+        {
+            if (isAliasingHolding)
+                plotSparseTrace (processor.aliasingDetection.getPeakPreDb().data(), N,
+                                 WTColors::preEffect, 1.2f);
+            else
+                plotTrace (processor.preSpectrumDb, WTColors::preEffect);
+
+            const float* diffSource = isAliasingHolding
+                ? processor.aliasingDetection.getPeakDifferentialDb().data()
+                : processor.aliasingDetection.getLiveDifferentialDb().data();
+
+            plotSparseTrace (diffSource, N, WTColors::analysis, 1.6f);
+        }
+
+        // HUD: peak alias readout in the top-right of the plot, shown
+        // in every aliasing view so the user can confirm at a glance
+        // whether anything has been detected even while looking at the
+        // Pre / Post sanity-check traces. Peak is across all frames
+        // since the last reset / Clear.
+        if (inAliasingMode)
+        {
+            const float peakDb = processor.aliasingDetection.getPeakResidueDb();
+            const float peakHz = processor.aliasingDetection.getPeakResidueHz();
+
+            juce::String hudText;
+            if (peakDb <= AliasingDetection::kNoMeasurementDb + 1.0f)
+            {
+                hudText = "No alias residue detected";
+            }
+            else
+            {
+                juce::String freqStr;
+                if      (peakHz < 1000.0f)  freqStr = juce::String ((int) std::round (peakHz)) + " Hz";
+                else if (peakHz < 10000.0f) freqStr = juce::String (peakHz / 1000.0f, 2) + " kHz";
+                else                        freqStr = juce::String (peakHz / 1000.0f, 1) + " kHz";
+
+                hudText = "Peak alias  " + juce::String (peakDb, 1) + " dB FS  at  " + freqStr;
+            }
+
+            g.setColour (WTColors::analysis);
+            g.setFont (juce::FontOptions (sf (11.0f)));
+            auto hudRect = plotArea.reduced (sx (8)).removeFromTop (sx (16));
+            g.drawText (hudText, hudRect, juce::Justification::topRight, false);
         }
     }
 }

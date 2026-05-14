@@ -26,7 +26,8 @@
 #include "PluginProcessor.h"
 
 class SpectrumDisplay  : public juce::Component,
-                         private juce::Timer
+                         private juce::Timer,
+                         private juce::AudioProcessorValueTreeState::Listener
 {
 public:
     explicit SpectrumDisplay (WTAnalyzerAudioProcessor& proc);
@@ -35,12 +36,17 @@ public:
     void setUiScale (float newScale) noexcept;
 
     void paint (juce::Graphics&) override;
+    void resized() override;
 
     void mouseDown        (const juce::MouseEvent&) override;
     void mouseDrag        (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
     void mouseMove        (const juce::MouseEvent&) override;
     void mouseExit        (const juce::MouseEvent&) override;
+
+    // PluginEditor calls this from applyAnalysisMode so the alias view
+    // toggle buttons only appear when AliasingDetection mode is active.
+    void setAliasingViewButtonsVisible (bool shouldBeVisible);
 
     // Hover state, read by the CursorReadout panel below the spectrum. Only
     // valid when isHoverActive() is true (cursor is inside the plot area,
@@ -51,9 +57,14 @@ public:
 
 private:
     void timerCallback() override;
+    void parameterChanged (const juce::String& parameterID, float newValue) override;
 
     int   sx (int   v) const noexcept { return juce::roundToInt ((float) v * uiScale); }
     float sf (float v) const noexcept { return v * uiScale; }
+
+    int aliasingViewIndex() const noexcept;   // 0 = Composite, 1 = Pre, 2 = Post
+    void syncAliasingViewButtons();
+    void layoutAliasingViewButtons (juce::Rectangle<int> plotArea);
 
     // Plot area is the spectrum minus the dB gutter on the left and the
     // frequency gutter on the bottom. Computed identically in paint() and
@@ -110,6 +121,20 @@ private:
     bool  hoverActive = false;
     float hoverFreq   = 0.0f;
     float hoverDb     = 0.0f;
+
+    // Aliasing-mode view selector and capture controls. Mirrors the
+    // THDDisplay pattern. View selector is a radio group synced to the
+    // aliasingView APVTS choice; Hold and Clear are local state (no
+    // persistence across plugin instances). Visibility is toggled by
+    // setAliasingViewButtonsVisible() so the controls only appear in
+    // AliasingDetection mode.
+    juce::TextButton aliasingCompositeButton { "Composite" };
+    juce::TextButton aliasingPreButton       { "Pre" };
+    juce::TextButton aliasingPostButton      { "Post" };
+    juce::TextButton aliasingHoldButton      { "Hold" };
+    juce::TextButton aliasingClearButton     { "Clear" };
+
+    bool isAliasingHolding = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectrumDisplay)
 };

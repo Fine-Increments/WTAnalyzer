@@ -69,12 +69,42 @@ void WTAnalyzerAudioProcessorEditor::applyAnalysisMode (int modeIndex)
 
     using Mode = WTAnalyzerAudioProcessor::AnalysisMode;
     const bool wantsSpectrumPath = (modeIndex == (int) Mode::GenericOverlay
-                                  || modeIndex == (int) Mode::FrequencyResponse);
+                                  || modeIndex == (int) Mode::FrequencyResponse
+                                  || modeIndex == (int) Mode::AliasingDetection);
     const bool wantsThdPath      = (modeIndex == (int) Mode::THDMeasurement);
 
     spectrumDisplay.setVisible (wantsSpectrumPath);
     cursorReadout  .setVisible (wantsSpectrumPath);
     thdDisplay     .setVisible (wantsThdPath);
+
+    // The alias-view toggle row lives inside SpectrumDisplay (it's tied to
+    // a specific mode within the shared spectrum panel) but its visibility
+    // is mode-driven from the editor.
+    spectrumDisplay.setAliasingViewButtonsVisible (modeIndex == (int) Mode::AliasingDetection);
+
+    // Per-mode input caption. Mention any non-standard inputs that yield
+    // useful diagnostic value, not just the textbook test signal. Empty
+    // string for modes that genuinely have no input assumption.
+    switch ((Mode) modeIndex)
+    {
+        case Mode::GenericOverlay:
+            captionText = {};
+            break;
+        case Mode::FrequencyResponse:
+            captionText = "Sweep tone or broadband noise. "
+                          "Wavetable sweeps also surface signal-character response.";
+            break;
+        case Mode::THDMeasurement:
+            captionText = "Steady sine. "
+                          "Differential view also works for saw, square, or wavetable input.";
+            break;
+        case Mode::AliasingDetection:
+            captionText = "High-frequency sine sweep (4-20 kHz). "
+                          "Saw or square sweeps fold more harmonics into the alias zone.";
+            break;
+    }
+
+    repaint();
 }
 
 //==============================================================================
@@ -93,6 +123,13 @@ void WTAnalyzerAudioProcessorEditor::paint (juce::Graphics& g)
     g.setColour (juce::Colours::whitesmoke);
     g.setFont (juce::FontOptions (sf (16.0f)));
     g.drawText ("WTAnalyzer", headerRow, juce::Justification::centredLeft);
+
+    if (captionText.isNotEmpty() && ! captionBounds.isEmpty())
+    {
+        g.setColour (juce::Colours::grey);
+        g.setFont (juce::FontOptions (sf (11.0f)));
+        g.drawText (captionText, captionBounds, juce::Justification::centred, false);
+    }
 }
 
 void WTAnalyzerAudioProcessorEditor::resized()
@@ -120,9 +157,15 @@ void WTAnalyzerAudioProcessorEditor::resized()
     const int metersHeight = sx (40) + sx (20) + sx (40);  // post + scale strip + pre
     levelMetersPanel.setBounds (bounds.removeFromBottom (metersHeight));
 
-    // Readout strip between spectrum and meters: left-aligned cursor coords,
-    // replaces the prior empty gap.
+    // Readout strip between spectrum and meters. The cursor readout occupies
+    // the left 220 sx (only visible when hovering the spectrum), and the
+    // caption is drawn across the full strip width with centred justification
+    // so it sits visually below the analysis panel rather than tucked into
+    // the right edge. Overlap with the cursor readout is rare (only on
+    // hover) and the cursor's short text doesn't obscure the middle of the
+    // caption.
     auto readoutStrip = bounds.removeFromBottom (sx (18));
+    captionBounds = readoutStrip;
     cursorReadout.setBounds (readoutStrip.removeFromLeft (sx (220)));
     bounds.removeFromBottom (sx (4));
 

@@ -133,9 +133,9 @@ juce::Colour THDDisplay::currentViewColour() const noexcept
     {
         case THDMeasurement::Source::Pre:  return WTColors::preEffect;
         case THDMeasurement::Source::Post: return WTColors::postEffect;
-        case THDMeasurement::Source::Diff: return WTColors::frequencyResponse;
+        case THDMeasurement::Source::Diff: return WTColors::analysis;
     }
-    return WTColors::frequencyResponse;
+    return WTColors::analysis;
 }
 
 THDDisplay::DisplayFrame THDDisplay::sampleProcessor() const
@@ -288,7 +288,7 @@ void THDDisplay::paint (juce::Graphics& g)
     else if (thdPct < 100.0f)   thdText = juce::String (thdPct, 2) + "%";
     else                        thdText = juce::String (thdPct, 1) + "%";
 
-    g.setColour (WTColors::frequencyResponse);
+    g.setColour (WTColors::analysis);
     g.setFont (juce::FontOptions (sf (30.0f)));
     g.drawText (thdText + " THD", topL, juce::Justification::centred, false);
 

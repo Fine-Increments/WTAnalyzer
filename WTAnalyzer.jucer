@@ -46,6 +46,10 @@
               file="Source/Analyses/THDMeasurement.cpp"/>
         <FILE id="ThdM02" name="THDMeasurement.h" compile="0" resource="0"
               file="Source/Analyses/THDMeasurement.h"/>
+        <FILE id="Alis01" name="AliasingDetection.cpp" compile="1" resource="0"
+              file="Source/Analyses/AliasingDetection.cpp"/>
+        <FILE id="Alis02" name="AliasingDetection.h" compile="0" resource="0"
+              file="Source/Analyses/AliasingDetection.h"/>
       </GROUP>
     </GROUP>
   </MAINGROUP>
