@@ -52,7 +52,10 @@ void SpectrumDisplay::paint (juce::Graphics& g)
     const float     logRange = logMax - logMin;
 
     constexpr float kMinDb = -80.0f;
-    constexpr float kMaxDb = 6.0f;
+    // Top of the plot is +18 dB; the highest labeled gridline (+12 dB) sits
+    // 6 dB below the edge so its label fits inside the component. The top
+    // strip between +12 and +18 is headroom for trace excursions.
+    constexpr float kMaxDb = 18.0f;
     const float     dbRange = kMaxDb - kMinDb;
 
     auto freqToX = [&] (float freq) -> float
@@ -76,7 +79,7 @@ void SpectrumDisplay::paint (juce::Graphics& g)
         const float x = freqToX (f);
         g.drawLine (x, (float) plotArea.getY(), x, (float) plotArea.getBottom(), sf (1.0f));
     }
-    const std::array<float, 5> kDbGrid { -60.0f, -40.0f, -20.0f, 0.0f, 6.0f };
+    const std::array<float, 6> kDbGrid { -60.0f, -40.0f, -20.0f, 0.0f, 6.0f, 12.0f };
     for (float db : kDbGrid)
     {
         const float y = dbToY (db);
@@ -106,9 +109,9 @@ void SpectrumDisplay::paint (juce::Graphics& g)
     }
 
     struct DbLabel { float db; const char* text; };
-    const std::array<DbLabel, 5> kDbLabels {{
-        { 0.0f,   "0"   }, { -20.0f, "-20" }, { -40.0f, "-40" },
-        { -60.0f, "-60" }, { -80.0f, "-80" }
+    const std::array<DbLabel, 6> kDbLabels {{
+        { 12.0f,  "+12" }, { 0.0f,   "0"   }, { -20.0f, "-20" },
+        { -40.0f, "-40" }, { -60.0f, "-60" }, { -80.0f, "-80" }
     }};
     for (auto label : kDbLabels)
     {
