@@ -15,6 +15,7 @@ WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioP
       audioProcessor       (p),
       spectrumDisplay      (p),
       cursorReadout        (spectrumDisplay),
+      thdDisplay           (p),
       levelMetersPanel     (p),
       latencyPanel         (p)
 {
@@ -22,6 +23,7 @@ WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioP
 
     addAndMakeVisible (spectrumDisplay);
     addAndMakeVisible (cursorReadout);
+    addChildComponent (thdDisplay);     // hidden by default; applyAnalysisMode shows it
     addAndMakeVisible (levelMetersPanel);
     addAndMakeVisible (latencyPanel);
 
@@ -40,11 +42,39 @@ WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioP
     setResizable (true, true);
     setResizeLimits (kMinWidth, kMinHeight, kMaxWidth, kMaxHeight);
     setSize (kBaseWidth, kBaseHeight);
+
+    // Pick up the current activeAnalysis value immediately and any subsequent
+    // changes (from the ComboBox, host preset load, host automation). Cheap
+    // poll - mode changes are infrequent so 10 Hz is plenty.
+    applyAnalysisMode ((int) *audioProcessor.apvts.getRawParameterValue ("activeAnalysis"));
+    startTimerHz (10);
 }
 
 WTAnalyzerAudioProcessorEditor::~WTAnalyzerAudioProcessorEditor()
 {
+    stopTimer();
     setLookAndFeel (nullptr);  // detach before LookAndFeel member destructs
+}
+
+void WTAnalyzerAudioProcessorEditor::timerCallback()
+{
+    const int current = (int) *audioProcessor.apvts.getRawParameterValue ("activeAnalysis");
+    if (current != lastAppliedAnalysisMode)
+        applyAnalysisMode (current);
+}
+
+void WTAnalyzerAudioProcessorEditor::applyAnalysisMode (int modeIndex)
+{
+    lastAppliedAnalysisMode = modeIndex;
+
+    using Mode = WTAnalyzerAudioProcessor::AnalysisMode;
+    const bool wantsSpectrumPath = (modeIndex == (int) Mode::GenericOverlay
+                                  || modeIndex == (int) Mode::FrequencyResponse);
+    const bool wantsThdPath      = (modeIndex == (int) Mode::THDMeasurement);
+
+    spectrumDisplay.setVisible (wantsSpectrumPath);
+    cursorReadout  .setVisible (wantsSpectrumPath);
+    thdDisplay     .setVisible (wantsThdPath);
 }
 
 //==============================================================================
@@ -71,6 +101,7 @@ void WTAnalyzerAudioProcessorEditor::resized()
     lookAndFeel.setUiScale (s);
     spectrumDisplay .setUiScale (s);
     cursorReadout   .setUiScale (s);
+    thdDisplay      .setUiScale (s);
     levelMetersPanel.setUiScale (s);
     latencyPanel    .setUiScale (s);
 
@@ -95,5 +126,7 @@ void WTAnalyzerAudioProcessorEditor::resized()
     cursorReadout.setBounds (readoutStrip.removeFromLeft (sx (220)));
     bounds.removeFromBottom (sx (4));
 
+    // Spectrum and THD share the same rect; visibility decides which is drawn.
     spectrumDisplay.setBounds (bounds);
+    thdDisplay     .setBounds (bounds);
 }

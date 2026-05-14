@@ -31,6 +31,12 @@ namespace WTColors
     // Per-analysis result curves drawn on top of the spectrum.
     inline const juce::Colour frequencyResponse { 0xff9be15c };  // green-yellow
 
+    // ---- THD analysis -------------------------------------------------------
+    // Fundamental uses the postEffect colour (it is the signal you wanted),
+    // harmonics get a warm distortion tone so they read as "artifact, not
+    // signal" at a glance.
+    inline const juce::Colour thdHarmonic { 0xffe8743a };  // warm orange
+
     // ---- Optional: dim variant used for inactive channels -------------------
     // For consistent "not routed / no data" rendering. Each consumer can opt
     // in or use its own dimming math.

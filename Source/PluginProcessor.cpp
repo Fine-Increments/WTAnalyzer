@@ -39,7 +39,7 @@ WTAnalyzerAudioProcessor::createParameterLayout()
     layout.add (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { "activeAnalysis", 1 },
         "Active Analysis",
-        juce::StringArray { "Generic Overlay", "Frequency Response" },
+        juce::StringArray { "Generic Overlay", "Frequency Response", "THD Measurement" },
         0));
 
     // Level meter mode: false = Peak (default, matches DAW meter behaviour),
@@ -143,6 +143,10 @@ void WTAnalyzerAudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
     postSpectrumDb.fill (-120.0f);
 
     frequencyResponse.prepare (kSpectrumBins);
+
+    const float binFreqScale = (float) sampleRate / (float) kSpectrumFftSize;
+    thdMeasurement.prepare (kSpectrumBins, binFreqScale);
+
     lastActiveAnalysisIndex = (int) *apvts.getRawParameterValue ("activeAnalysis");
 }
 
@@ -211,11 +215,14 @@ void WTAnalyzerAudioProcessor::runSpectrumFft()
     if (activeIndex != lastActiveAnalysisIndex)
     {
         frequencyResponse.reset();
+        thdMeasurement   .reset();
         lastActiveAnalysisIndex = activeIndex;
     }
 
     if (activeIndex == (int) AnalysisMode::FrequencyResponse)
         frequencyResponse.update (preSpectrumDb.data(), postSpectrumDb.data());
+    else if (activeIndex == (int) AnalysisMode::THDMeasurement)
+        thdMeasurement.update (preSpectrumDb.data(), postSpectrumDb.data());
 
     spectrumFrameCount.fetch_add (1, std::memory_order_release);
 }

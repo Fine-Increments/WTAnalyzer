@@ -15,6 +15,7 @@
 #include "PluginProcessor.h"
 #include "SpectrumDisplay.h"
 #include "CursorReadout.h"
+#include "THDDisplay.h"
 #include "LevelMetersPanel.h"
 #include "LatencyPanel.h"
 
@@ -43,7 +44,8 @@ private:
 };
 
 //==============================================================================
-class WTAnalyzerAudioProcessorEditor  : public juce::AudioProcessorEditor
+class WTAnalyzerAudioProcessorEditor  : public juce::AudioProcessorEditor,
+                                        private juce::Timer
 {
 public:
     // The layout in paint()/resized() is authored at this size. Every pixel and
@@ -63,6 +65,9 @@ public:
     void resized() override;
 
 private:
+    void timerCallback() override;
+    void applyAnalysisMode (int modeIndex);
+
     float scale() const noexcept
     {
         return juce::jmin ((float) getWidth()  / (float) kBaseWidth,
@@ -75,10 +80,17 @@ private:
     WTAnalyzerAudioProcessor& audioProcessor;
     WTLookAndFeel lookAndFeel;
 
+    // Spectrum-based display path (Generic Overlay, Frequency Response).
     SpectrumDisplay  spectrumDisplay;
     CursorReadout    cursorReadout;
+
+    // THD-mode display path.
+    THDDisplay       thdDisplay;
+
     LevelMetersPanel levelMetersPanel;
     LatencyPanel     latencyPanel;
+
+    int lastAppliedAnalysisMode = -1;   // forces an initial visibility update
 
     juce::ComboBox analysisSelector;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> analysisAttachment;

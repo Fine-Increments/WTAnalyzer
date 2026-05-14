@@ -25,6 +25,10 @@
             file="Source/CursorReadout.cpp"/>
       <FILE id="CrRd02" name="CursorReadout.h" compile="0" resource="0"
             file="Source/CursorReadout.h"/>
+      <FILE id="THDsp1" name="THDDisplay.cpp" compile="1" resource="0"
+            file="Source/THDDisplay.cpp"/>
+      <FILE id="THDsp2" name="THDDisplay.h" compile="0" resource="0"
+            file="Source/THDDisplay.h"/>
       <FILE id="LMet01" name="LevelMetersPanel.cpp" compile="1" resource="0"
             file="Source/LevelMetersPanel.cpp"/>
       <FILE id="LMet02" name="LevelMetersPanel.h" compile="0" resource="0"
@@ -38,6 +42,10 @@
               file="Source/Analyses/FrequencyResponse.cpp"/>
         <FILE id="FrRsp2" name="FrequencyResponse.h" compile="0" resource="0"
               file="Source/Analyses/FrequencyResponse.h"/>
+        <FILE id="ThdM01" name="THDMeasurement.cpp" compile="1" resource="0"
+              file="Source/Analyses/THDMeasurement.cpp"/>
+        <FILE id="ThdM02" name="THDMeasurement.h" compile="0" resource="0"
+              file="Source/Analyses/THDMeasurement.h"/>
       </GROUP>
     </GROUP>
   </MAINGROUP>

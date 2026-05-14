@@ -10,6 +10,7 @@
 
 #include <JuceHeader.h>
 #include "Analyses/FrequencyResponse.h"
+#include "Analyses/THDMeasurement.h"
 
 //==============================================================================
 /**
@@ -114,12 +115,23 @@ public:
 
     // Active analysis (FrequencyResponse, etc.). Display reads via this enum
     // to decide which mode-specific overlays to draw. Stays in sync with the
-    // APVTS `activeAnalysis` parameter via updates in processBlock.
-    enum class AnalysisMode { GenericOverlay = 0, FrequencyResponse = 1 };
+    // APVTS `activeAnalysis` parameter via updates in processBlock. Indexes
+    // here must match the StringArray order in createParameterLayout.
+    enum class AnalysisMode
+    {
+        GenericOverlay    = 0,
+        FrequencyResponse = 1,
+        THDMeasurement    = 2
+    };
 
     // First analysis: derived from the existing pre/post spectrum FFT.
     // See Analyses/FrequencyResponse.h for the algorithm.
     FrequencyResponse frequencyResponse;
+
+    // Second analysis: harmonic distortion of a sine-tone input. Like
+    // FrequencyResponse, consumes the existing spectrum FFT output and
+    // produces a derived measurement - no new DSP stream.
+    THDMeasurement thdMeasurement;
 
 private:
     //==============================================================================
