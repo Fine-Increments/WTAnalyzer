@@ -40,21 +40,22 @@ namespace IRExport
         if (totalLen <= 0) return false;
 
         destination.deleteFile();
-        auto stream = destination.createOutputStream();
+        // createWriterFor takes a unique_ptr<OutputStream>& and transfers
+        // ownership on success (sets the input to nullptr); otherwise the
+        // stream stays intact for the caller to retry with a different
+        // format.
+        std::unique_ptr<juce::OutputStream> stream = destination.createOutputStream();
         if (stream == nullptr) return false;
 
-        juce::WavAudioFormat wav;
-        const juce::AudioFormatWriterOptions opts =
-            juce::AudioFormatWriterOptions()
-                .withSampleRate     (sampleRate)
-                .withNumChannels    (2)
-                .withBitsPerSample  (32)
-                .withSampleFormat   (juce::AudioFormatWriterOptions::SampleFormat::floatingPoint);
+        const auto opts = juce::AudioFormatWriterOptions{}
+                              .withSampleRate    (sampleRate)
+                              .withNumChannels   (2)
+                              .withBitsPerSample (32)
+                              .withSampleFormat  (juce::AudioFormatWriterOptions::SampleFormat::floatingPoint);
 
-        std::unique_ptr<juce::AudioFormatWriter> writer (
-            wav.createWriterFor (stream.get(), opts));
+        juce::WavAudioFormat wav;
+        auto writer = wav.createWriterFor (stream, opts);
         if (writer == nullptr) return false;
-        stream.release();   // writer takes ownership of the stream
 
         juce::AudioBuffer<float> outBuf (2, totalLen);
         outBuf.clear();

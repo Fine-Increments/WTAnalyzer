@@ -46,13 +46,14 @@ namespace WTColors
     // specific UI (pre/post traces, meter labels, classical-view THD bars)
     // uses preEffect / postEffect instead. Do not introduce per-mode
     // accent colours - see feedback-color-semantics memory.
-    // _R variant follows the same L/R hue-contrast pattern as the channel
-    // colours for when analyses go stereo. Master is the bolder of the
-    // pair (chartreuse) for the same readability reason as preEffect /
-    // postEffect: layered traces draw L under R, so master = bolder keeps
-    // the channel identity visible.
-    inline const juce::Colour analysis   { 0xffd0ff30 };  // chartreuse   (L, master)
-    inline const juce::Colour analysis_R { 0xff9be15c };  // green-yellow (R)
+    // L (master) is a blue-tinged green; R (variant) is a yellow-tinged
+    // green. Both clearly read as "green" so the analysis family stays
+    // identifiable, but their hue split (one cool, one warm) keeps the
+    // channels visually distinct when both traces are layered. The
+    // earlier chartreuse / green-yellow pair was visually too similar -
+    // see user feedback 2026-05-15.
+    inline const juce::Colour analysis   { 0xff30e8a0 };  // mint / emerald   (L, master)
+    inline const juce::Colour analysis_R { 0xffcce840 };  // lime             (R)
 
     // ---- Optional: dim variant used for inactive channels -------------------
     // For consistent "not routed / no data" rendering. Each consumer can opt

@@ -9,6 +9,8 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
+#include <cmath>
+
 //==============================================================================
 WTAnalyzerAudioProcessor::WTAnalyzerAudioProcessor()
     : AudioProcessor (BusesProperties()
@@ -41,7 +43,7 @@ WTAnalyzerAudioProcessor::createParameterLayout()
         "Active Analysis",
         juce::StringArray { "Generic Overlay", "Frequency Response", "THD Measurement",
                             "Aliasing Detection", "IMD Measurement", "Direct Impulse IR",
-                            "Farina IR" },
+                            "Farina IR", "Stereo Image" },
         0));
 
     // Level meter mode: false = Peak (default, matches DAW meter behaviour),
@@ -89,6 +91,16 @@ WTAnalyzerAudioProcessor::createParameterLayout()
         juce::ParameterID { "imdHzLayout", 1 },
         "IMD Bars by Hz",
         false));
+
+    // Stereo Image view: which divergence to plot. Diff (default) is the
+    // device-added stereo divergence; Pre / Post show the raw input and
+    // output stereo image as sanity checks. Index order matches
+    // StereoAnalysis::View (Diff=0, Pre=1, Post=2).
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { "stereoView", 1 },
+        "Stereo Image View",
+        juce::StringArray { "Diff", "Pre", "Post" },
+        0));
 
     // Impulse-response window length in milliseconds. Maximum is 120000
     // (2 minutes) to accommodate supermassive-style reverb tails.
@@ -276,6 +288,7 @@ void WTAnalyzerAudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
     thdMeasurement   .prepare (kSpectrumBins, binFreqScale);
     aliasingDetection.prepare (kSpectrumBins, binFreqScale);
     imdMeasurement   .prepare (kSpectrumBins, binFreqScale);
+    stereoAnalysis   .prepare (kSpectrumBins);
     impulseResponse  .prepare (sampleRate, samplesPerBlock);
     impulseResponse  .setWindowMs    ((int) *apvts.getRawParameterValue ("irWindowMs"));
     impulseResponse  .setAverageGoal ((int) *apvts.getRawParameterValue ("irAverageCount"));
@@ -363,6 +376,7 @@ void WTAnalyzerAudioProcessor::runSpectrumFft()
         imdMeasurement   .reset();
         impulseResponse  .reset();
         farinaIR         .reset();
+        stereoAnalysis   .reset();
         lastActiveAnalysisIndex = activeIndex;
     }
 
@@ -392,6 +406,9 @@ void WTAnalyzerAudioProcessor::runSpectrumFft()
     else if (activeIndex == (int) AnalysisMode::IMDMeasurement)
         imdMeasurement.update (preSpectrumDb  .data(), postSpectrumDb  .data(),
                                preSpectrumDb_R.data(), postSpectrumDb_R.data());
+    else if (activeIndex == (int) AnalysisMode::StereoImage)
+        stereoAnalysis.update (preSpectrumDb  .data(), preSpectrumDb_R.data(),
+                               postSpectrumDb .data(), postSpectrumDb_R.data());
 
     spectrumFrameCount.fetch_add (1, std::memory_order_release);
 }
@@ -496,6 +513,22 @@ void WTAnalyzerAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
 {
     juce::ScopedNoDenormals noDenormals;
     const int numSamples = buffer.getNumSamples();
+
+    // Scrub non-finite samples at the input boundary. A device under test
+    // can emit NaN / Inf (an unstable filter at a sweep extreme, a
+    // divide-by-zero, an uninitialised tail) - left unchecked it
+    // propagates through every FFT to all bins and corrupts the whole
+    // display (a juce::Path built with NaN coordinates rasterises as
+    // blocky garbage). Scrubbing here protects every downstream analysis
+    // and the pass-through output in one pass. Cheap: a handful of
+    // channels x blockSize finite-checks.
+    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+    {
+        float* d = buffer.getWritePointer (ch);
+        for (int n = 0; n < numSamples; ++n)
+            if (! std::isfinite (d[n]))
+                d[n] = 0.0f;
+    }
 
     auto postBus = getBusBuffer (buffer, true,  0);  // main input = post-effect (wet)
     auto preBus  = getBusBuffer (buffer, true,  1);  // sidechain = pre-effect (dry)

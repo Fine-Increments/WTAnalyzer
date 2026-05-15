@@ -17,6 +17,7 @@
 #include "Analyses/ImpulseResponse.h"
 #include "Analyses/FarinaIR.h"
 #include "Analyses/SweepCapture.h"
+#include "Analyses/StereoAnalysis.h"
 
 //==============================================================================
 /**
@@ -107,9 +108,18 @@ public:
 
     // Spectrum overlay: continuously updated FFT magnitudes of the
     // delay-compensated pre and the post-effect signals.
-    static constexpr int kSpectrumFftOrder = 12;                       // 4096-point
+    //
+    // Order 13 = 8192-point FFT, giving ~5.86 Hz/bin at 48 kHz (~2.93
+    // Hz at 96 kHz). Better-than-Pro-Q-grade frequency resolution.
+    // Net CPU cost is roughly the same as the previous order-12 setup
+    // because each FFT runs ~1.65x slower but at half the rate (the
+    // hop size also doubled to preserve the 75% overlap). The longer
+    // window (170 ms at 48 kHz) provides additional inherent
+    // smoothing that complements the EMA smoothing in
+    // FrequencyResponse.
+    static constexpr int kSpectrumFftOrder = 13;                       // 8192-point
     static constexpr int kSpectrumFftSize  = 1 << kSpectrumFftOrder;
-    static constexpr int kSpectrumBins     = kSpectrumFftSize / 2;     // 2048 unique bins
+    static constexpr int kSpectrumBins     = kSpectrumFftSize / 2;     // 4096 unique bins
     static constexpr int kSpectrumHopSize  = kSpectrumFftSize / 4;     // 75% overlap
 
     // Magnitude in dB per bin, written by audio thread and read directly by
@@ -145,7 +155,8 @@ public:
         AliasingDetection = 3,
         IMDMeasurement    = 4,
         DirectImpulseIR   = 5,
-        FarinaIR          = 6
+        FarinaIR          = 6,
+        StereoImage       = 7
     };
 
     // First analysis: derived from the existing pre/post spectrum FFT.
@@ -178,6 +189,12 @@ public:
     // acquired from a log sine sweep, which WTSynth can deliver
     // cleanly where discrete impulses can't.
     FarinaIR farinaIR;
+
+    // Seventh analysis: per-frequency stereo divergence (R - L level
+    // difference). Consumes the existing spectrum FFT output; produces
+    // pre / post / device-added divergence arrays for the Stereo Image
+    // mode's bipolar centred-on-zero display.
+    StereoAnalysis stereoAnalysis;
 
     // 2D capture across a sweep axis. Cross-cutting capability, not a
     // mode of its own: when active (`sweepCaptureActive` APVTS bool),

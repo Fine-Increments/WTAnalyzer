@@ -19,6 +19,7 @@
 #include "IMDDisplay.h"
 #include "ImpulseDisplay.h"
 #include "FarinaDisplay.h"
+#include "StereoDisplay.h"
 #include "LevelMetersPanel.h"
 #include "LatencyPanel.h"
 
@@ -44,6 +45,53 @@ public:
 
 private:
     float uiScale = 1.0f;
+};
+
+//==============================================================================
+// Small inline stereo-imbalance readout. Shows a grey metric label followed
+// by an L value and an R value, each tinted with its channel colour. Painted
+// via AttributedString so the two values can carry different colours within
+// a single component (a plain juce::Label is single-colour only).
+class ImbalanceReadout  : public juce::Component
+{
+public:
+    ImbalanceReadout() { setInterceptsMouseClicks (false, false); }
+
+    void setUiScale (float s) noexcept { uiScale = s; repaint(); }
+
+    void setContent (juce::String metricLabel,
+                     juce::String lText, juce::Colour lColour,
+                     juce::String rText, juce::Colour rColour)
+    {
+        metric   = std::move (metricLabel);
+        leftStr  = std::move (lText);   leftColour  = lColour;
+        rightStr = std::move (rText);   rightColour = rColour;
+        repaint();
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        const juce::Font font (juce::FontOptions (11.0f * uiScale));
+
+        juce::AttributedString as;
+        as.setJustification (juce::Justification::centredLeft);
+        if (metric.isNotEmpty())
+            as.append (metric + "   ", font, juce::Colours::grey);
+        if (leftStr.isNotEmpty())
+            as.append (leftStr + "    ", font, leftColour);
+        if (rightStr.isNotEmpty())
+            as.append (rightStr, font, rightColour);
+
+        as.draw (g, getLocalBounds().toFloat());
+    }
+
+private:
+    float uiScale = 1.0f;
+    juce::String metric, leftStr, rightStr;
+    juce::Colour leftColour  { juce::Colours::grey };
+    juce::Colour rightColour { juce::Colours::grey };
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ImbalanceReadout)
 };
 
 //==============================================================================
@@ -99,6 +147,9 @@ private:
     // Farina IR display path - sister panel, same time-domain IR plot.
     FarinaDisplay    farinaDisplay;
 
+    // Stereo Image display path - per-frequency stereo divergence.
+    StereoDisplay    stereoDisplay;
+
     LevelMetersPanel levelMetersPanel;
     LatencyPanel     latencyPanel;
 
@@ -150,14 +201,26 @@ private:
 
     // Inline stereo-imbalance readout. Sits in the readout strip between
     // the cursor readout (left) and the L / R / Diff toggles (right).
-    // Format is mode-specific: spectrum-based modes show "max diff at Hz",
-    // bar modes show numeric L vs R deltas, IR modes show max sample diff.
-    // Replaces the planned popup dashboard - keeping it inline avoids
-    // having to run every analysis concurrently to populate cross-mode
-    // numbers (only the active mode's analysis runs per spectrum hop).
-    juce::Label imbalanceReadout;
+    // Shows a mode-specific metric label plus per-channel L / R values,
+    // each tinted with its channel colour. Replaces the planned popup
+    // dashboard - keeping it inline avoids having to run every analysis
+    // concurrently to populate cross-mode numbers (only the active
+    // mode's analysis runs per spectrum hop).
+    ImbalanceReadout imbalanceReadout;
+
+    // Structured per-mode imbalance summary: a metric label plus L / R
+    // value strings and their channel colours.
+    struct ImbalanceContent
+    {
+        juce::String metric;
+        juce::String lText;
+        juce::String rText;
+        juce::Colour lColour { juce::Colours::grey };
+        juce::Colour rColour { juce::Colours::grey };
+    };
+
     void updateImbalanceReadout();
-    juce::String computeImbalanceText() const;
+    ImbalanceContent computeImbalanceContent() const;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (WTAnalyzerAudioProcessorEditor)
 };

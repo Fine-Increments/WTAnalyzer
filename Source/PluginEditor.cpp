@@ -8,6 +8,7 @@
 
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "Colors.h"
 
 //==============================================================================
 // Modal popup that shows the detailed instructions for whichever analysis
@@ -55,6 +56,7 @@ WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioP
       imdDisplay           (p),
       impulseDisplay       (p),
       farinaDisplay        (p),
+      stereoDisplay        (p),
       levelMetersPanel     (p),
       latencyPanel         (p)
 {
@@ -63,13 +65,11 @@ WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioP
     addAndMakeVisible (spectrumDisplay);
     addAndMakeVisible (cursorReadout);
     addChildComponent (imbalanceReadout);
-    imbalanceReadout.setJustificationType (juce::Justification::centredLeft);
-    imbalanceReadout.setColour (juce::Label::textColourId, juce::Colours::grey);
-    imbalanceReadout.setInterceptsMouseClicks (false, false);
     addChildComponent (thdDisplay);     // hidden by default; applyAnalysisMode shows it
     addChildComponent (imdDisplay);
     addChildComponent (impulseDisplay);
     addChildComponent (farinaDisplay);
+    addChildComponent (stereoDisplay);
     addAndMakeVisible (levelMetersPanel);
     addAndMakeVisible (latencyPanel);
 
@@ -309,6 +309,7 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeName (int modeIndex)
         case Mode::IMDMeasurement:    return "IMD Measurement";
         case Mode::DirectImpulseIR:   return "Direct Impulse IR";
         case Mode::FarinaIR:          return "Farina IR";
+        case Mode::StereoImage:       return "Stereo Image";
     }
     return "Analysis";
 }
@@ -775,12 +776,59 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
                 "  same mathematically-generated inverse-sweep filter (the\n"
                 "  filter is parameter-driven, not signal-driven, so it is\n"
                 "  identical for L and R). Resulting IRs overlay with R\n"
-                "  drawn first, L on top (chartreuse master). The L / R /\n"
-                "  Diff toggle row in the readout strip controls visibility -\n"
-                "  L and R independent on/off (at least one stays on), Diff\n"
-                "  is a whitesmoke overlay of IR_R(t) - IR_L(t) per sample.\n"
+                "  drawn first, L on top. The L / R / Diff toggle row in\n"
+                "  the readout strip controls visibility - L and R\n"
+                "  independent on/off (at least one stays on), Diff is a\n"
+                "  whitesmoke overlay of IR_R(t) - IR_L(t) per sample.\n"
                 "  Diff exposes channel-specific reverb decay or modulation\n"
                 "  behaviour.\n";
+
+        case Mode::StereoImage:
+            return
+                "Stereo Image\n"
+                "============\n\n"
+                "What it measures\n"
+                "  Per-frequency stereo divergence - how much the right and left\n"
+                "  channels differ in level at each frequency. This is the home for\n"
+                "  stereo-specific analysis; the divergence view is the first of\n"
+                "  several planned stereo visualisations (spectral phase correlation\n"
+                "  and a goniometer are coming).\n\n"
+                "Input\n"
+                "  Any broadband signal - pink noise, a sweep, or wavetable content\n"
+                "  that excites the spectrum. The richer the input's frequency\n"
+                "  coverage, the more of the divergence curve is measurable.\n\n"
+                "Views (Diff / Pre / Post)\n"
+                "  Diff (default): the divergence the DEVICE introduced -\n"
+                "    (post_R - post_L) minus (pre_R - pre_L). A stereo-transparent\n"
+                "    device reads a flat green line here no matter how stereo the\n"
+                "    input already was. Any departure from the line is the device's\n"
+                "    own contribution to the stereo image.\n"
+                "  Pre:  the raw input signal's stereo image (pre_R - pre_L).\n"
+                "  Post: the raw output signal's stereo image (post_R - post_L).\n\n"
+                "  Pre and Diff require the sidechain (pre-effect) input wired. If\n"
+                "  it isn't connected, the panel says so rather than drawing a\n"
+                "  meaningless flat line - check your sidechain routing.\n\n"
+                "How to read it\n"
+                "  The green centre line is zero divergence - L and R agree. The\n"
+                "  trace lifts UP into lime where the right channel is louder, and\n"
+                "  DOWN into mint where the left channel is louder. The Y axis is\n"
+                "  bipolar dB: the magnitude is the level difference, the side\n"
+                "  tells you which channel. A mono signal through a stereo-\n"
+                "  transparent device sits flat on the green line.\n\n"
+                "  This is a level-divergence meter, not phase correlation -\n"
+                "  it shows where and how much a device skews the stereo balance\n"
+                "  (a mid-side EQ move, a one-channel boost, a frequency-dependent\n"
+                "  widener). Phase correlation is a separate planned view.\n\n"
+                "2D Sweep Capture\n"
+                "  Not yet implemented for this mode. When added, the heatmap X\n"
+                "  axis would be log frequency, Y the sweep position, colour the\n"
+                "  signed divergence (bipolar - one channel's colour for each\n"
+                "  direction).\n\n"
+                "Stereo (L / R / Diff)\n"
+                "  This entire mode IS the stereo analysis - it has its own\n"
+                "  Pre / Post / Diff selector in the panel. The shared L / R / Diff\n"
+                "  toggle row is hidden here because every view is inherently a\n"
+                "  stereo comparison; there is no single-channel view to select.\n";
     }
     return "No help available for this mode.";
 }
@@ -802,111 +850,163 @@ void WTAnalyzerAudioProcessorEditor::updateImbalanceReadout()
     // In Diff mode the trace itself already shows the asymmetry visually,
     // but the numerical summary stays useful for screenshots / reports
     // and for the L+R views where the diff isn't drawn.
-    imbalanceReadout.setText (computeImbalanceText(), juce::dontSendNotification);
+    const auto c = computeImbalanceContent();
+    imbalanceReadout.setContent (c.metric, c.lText, c.lColour, c.rText, c.rColour);
 }
 
-juce::String WTAnalyzerAudioProcessorEditor::computeImbalanceText() const
+WTAnalyzerAudioProcessorEditor::ImbalanceContent
+WTAnalyzerAudioProcessorEditor::computeImbalanceContent() const
 {
     using Mode = WTAnalyzerAudioProcessor::AnalysisMode;
     const int mode = (int) *audioProcessor.apvts.getRawParameterValue ("activeAnalysis");
 
-    auto formatHz = [] (float hz) -> juce::String
-    {
-        if (hz < 1000.0f)  return juce::String ((int) std::round (hz)) + " Hz";
-        if (hz < 10000.0f) return juce::String (hz / 1000.0f, 2) + " kHz";
-        return juce::String (hz / 1000.0f, 1) + " kHz";
-    };
+    // Stable summary metrics per mode: a single scalar per channel that
+    // changes slowly even with complex signals. Avoids the "max diff at Hz"
+    // pattern which flickered between bin peaks frame-to-frame on
+    // broadband content. The user reads L and R side-by-side and notices
+    // divergence at a glance; the Diff button is for drilling into the
+    // frequency / harmonic distribution of that divergence.
 
-    auto signed1 = [] (float v) -> juce::String
-    {
-        return (v >= 0.0f ? juce::String ("+") : juce::String()) + juce::String (v, 1);
-    };
-    auto signed3 = [] (float v) -> juce::String
-    {
-        return (v >= 0.0f ? juce::String ("+") : juce::String()) + juce::String (v, 3);
-    };
-    auto signed4 = [] (float v) -> juce::String
-    {
-        return (v >= 0.0f ? juce::String ("+") : juce::String()) + juce::String (v, 4);
-    };
+    auto db1   = [] (float v) -> juce::String { return juce::String (v, 1) + " dB"; };
+    auto pct3  = [] (float v) -> juce::String { return juce::String (v, 3) + "%";  };
+    auto val4  = [] (float v) -> juce::String { return juce::String (v, 4);        };
 
     const float sr = audioProcessor.currentSampleRate.load (std::memory_order_relaxed);
     const float binFreqScale = sr / (float) WTAnalyzerAudioProcessor::kSpectrumFftSize;
     constexpr float kMinHz = 20.0f, kMaxHz = 20000.0f;
     constexpr float kNoiseFloorDb = -80.0f;
 
-    // Helper: scan two spectra and return (max signed diff, its Hz).
-    auto spectrumDiffPeak = [&] (const std::array<float, WTAnalyzerAudioProcessor::kSpectrumBins>& specL,
-                                 const std::array<float, WTAnalyzerAudioProcessor::kSpectrumBins>& specR,
-                                 float& outAbs, float& outSigned, float& outHz)
+    // Mean dB across audible bins, ignoring near-noise-floor bins. A
+    // "channel centroid" — averaging in the dB domain is mathematically
+    // approximate but gives a stable comparable scalar that tracks
+    // gross channel asymmetry without bin-by-bin flicker.
+    auto spectrumMeanDb = [&] (const std::array<float, WTAnalyzerAudioProcessor::kSpectrumBins>& spec) -> float
     {
-        outAbs = 0.0f; outSigned = 0.0f; outHz = 0.0f;
-        for (int bin = 1; bin < (int) specL.size(); ++bin)
+        float sum = 0.0f;
+        int   count = 0;
+        for (int bin = 1; bin < (int) spec.size(); ++bin)
         {
             const float hz = (float) bin * binFreqScale;
             if (hz < kMinHz) continue;
             if (hz > kMaxHz) break;
-            // Skip bins where both channels are below the noise floor -
-            // diff is meaningless ratio of two near-zero levels.
-            if (specL[bin] < kNoiseFloorDb && specR[bin] < kNoiseFloorDb) continue;
-
-            const float d = specR[bin] - specL[bin];
-            const float a = std::abs (d);
-            if (a > outAbs) { outAbs = a; outSigned = d; outHz = hz; }
+            if (spec[bin] < kNoiseFloorDb) continue;
+            sum += spec[bin];
+            ++count;
         }
+        return count > 0 ? sum / (float) count : kNoiseFloorDb;
     };
 
-    // Helper: scan a sparse diff array (uses sentinel for no-measurement bins).
-    auto sparseDiffPeak = [&] (const float* diff, int count, float sentinelFloor,
-                               float& outAbs, float& outSigned, float& outHz)
+    // Mean dB across valid bins of a sparse-with-sentinel array.
+    auto sparseMeanDb = [&] (const float* arr, int count, float sentinelFloor) -> float
     {
-        outAbs = 0.0f; outSigned = 0.0f; outHz = 0.0f;
+        float sum = 0.0f;
+        int   n = 0;
         for (int bin = 1; bin < count; ++bin)
         {
-            const float v = diff[bin];
+            const float v = arr[bin];
             if (v <= sentinelFloor + 0.5f) continue;
-            const float a = std::abs (v);
-            if (a > outAbs)
-            {
-                outAbs = a; outSigned = v;
-                outHz = (float) bin * binFreqScale;
-            }
+            sum += v;
+            ++n;
         }
+        return n > 0 ? sum / (float) n : sentinelFloor;
     };
+
+    // Peak dB across valid bins of a sparse-with-sentinel array.
+    auto sparsePeakDb = [] (const float* arr, int count, float sentinelFloor) -> float
+    {
+        float peak = sentinelFloor;
+        for (int bin = 1; bin < count; ++bin)
+        {
+            const float v = arr[bin];
+            if (v <= sentinelFloor + 0.5f) continue;
+            if (v > peak) peak = v;
+        }
+        return peak;
+    };
+
+    // RMS amplitude of a captured IR buffer. Strided iteration so long
+    // windows (up to 120 s = 5.76M samples at 48 kHz) don't burn the
+    // message thread; RMS of a strided sample is a faithful approximation
+    // since IR amplitudes are smooth over many adjacent samples.
+    auto irRms = [] (const std::vector<float>& buf, int n) -> float
+    {
+        if (n <= 0) return 0.0f;
+        const int stride = juce::jmax (1, n / 10000);
+        double sumSq = 0.0;
+        int    count = 0;
+        for (int i = 0; i < n; i += stride)
+        {
+            const double s = (double) buf[(size_t) i];
+            sumSq += s * s;
+            ++count;
+        }
+        return count > 0 ? (float) std::sqrt (sumSq / (double) count) : 0.0f;
+    };
+
+    // Channel colour pairs. Spectrum-level metrics (Generic Overlay)
+    // belong to the post-effect signal, so they use the post colours;
+    // every analysis-output metric uses the analysis colours.
+    const juce::Colour postL = WTColors::postEffect;
+    const juce::Colour postR = WTColors::postEffect_R;
+    const juce::Colour anL   = WTColors::analysis;
+    const juce::Colour anR   = WTColors::analysis_R;
+
+    ImbalanceContent c;
 
     switch (mode)
     {
         case (int) Mode::GenericOverlay:
         {
-            float a, s, hz;
-            spectrumDiffPeak (audioProcessor.postSpectrumDb,
-                              audioProcessor.postSpectrumDb_R, a, s, hz);
-            if (a < 0.05f) return "post diff: balanced";
-            return "post diff: " + signed1 (s) + " dB at " + formatHz (hz);
+            const float l = spectrumMeanDb (audioProcessor.postSpectrumDb);
+            const float r = spectrumMeanDb (audioProcessor.postSpectrumDb_R);
+            c.metric  = "Avg output level";
+            c.lText   = "L " + db1 (l);   c.lColour = postL;
+            c.rText   = "R " + db1 (r);   c.rColour = postR;
+            break;
         }
 
         case (int) Mode::FrequencyResponse:
         {
-            const auto& diff = audioProcessor.frequencyResponse.getResponseDb_Diff();
-            float a, s, hz;
-            sparseDiffPeak (diff.data(), (int) diff.size(),
-                            FrequencyResponse::kNoMeasurementDb, a, s, hz);
-            if (a == 0.0f) return "FR diff: no measurement";
-            if (a < 0.05f) return "FR diff: balanced";
-            return "FR diff: " + signed1 (s) + " dB at " + formatHz (hz);
+            const auto& fl = audioProcessor.frequencyResponse.getResponseDb();
+            const auto& fr = audioProcessor.frequencyResponse.getResponseDb_R();
+            const float l = sparseMeanDb (fl.data(), (int) fl.size(),
+                                          FrequencyResponse::kNoMeasurementDb);
+            const float r = sparseMeanDb (fr.data(), (int) fr.size(),
+                                          FrequencyResponse::kNoMeasurementDb);
+            c.metric = "Avg gain across spectrum";
+            if (l <= FrequencyResponse::kNoMeasurementDb + 1.0f
+                && r <= FrequencyResponse::kNoMeasurementDb + 1.0f)
+            {
+                c.lText = "no measurement";
+            }
+            else
+            {
+                c.lText = "L " + db1 (l);   c.lColour = anL;
+                c.rText = "R " + db1 (r);   c.rColour = anR;
+            }
+            break;
         }
 
         case (int) Mode::AliasingDetection:
         {
-            // Use peak-held diff so the readout follows the same
-            // "accumulate across a sweep" semantics as the trace.
-            const auto& diff = audioProcessor.aliasingDetection.getPeakDifferentialDb_Diff();
-            float a, s, hz;
-            sparseDiffPeak (diff.data(), (int) diff.size(),
-                            AliasingDetection::kNoMeasurementDb, a, s, hz);
-            if (a == 0.0f) return "alias diff: no measurement";
-            if (a < 0.05f) return "alias diff: balanced";
-            return "alias diff: " + signed1 (s) + " dB at " + formatHz (hz);
+            const auto& pl = audioProcessor.aliasingDetection.getPeakDifferentialDb();
+            const auto& pr = audioProcessor.aliasingDetection.getPeakDifferentialDb_R();
+            const float l = sparsePeakDb (pl.data(), (int) pl.size(),
+                                          AliasingDetection::kNoMeasurementDb);
+            const float r = sparsePeakDb (pr.data(), (int) pr.size(),
+                                          AliasingDetection::kNoMeasurementDb);
+            c.metric = "Peak alias residue";
+            if (l <= AliasingDetection::kNoMeasurementDb + 1.0f
+                && r <= AliasingDetection::kNoMeasurementDb + 1.0f)
+            {
+                c.lText = "no residue detected";
+            }
+            else
+            {
+                c.lText = "L " + db1 (l);   c.lColour = anL;
+                c.rText = "R " + db1 (r);   c.rColour = anR;
+            }
+            break;
         }
 
         case (int) Mode::THDMeasurement:
@@ -914,10 +1014,19 @@ juce::String WTAnalyzerAudioProcessorEditor::computeImbalanceText() const
             const auto& thd = audioProcessor.thdMeasurement;
             const bool vL = thd.isValid (THDMeasurement::Channel::L);
             const bool vR = thd.isValid (THDMeasurement::Channel::R);
-            if (! vL && ! vR) return "THD diff: no signal";
-            const float l = thd.getTotalThdPercent (THDMeasurement::Channel::L);
-            const float r = thd.getTotalThdPercent (THDMeasurement::Channel::R);
-            return "THD diff: " + signed3 (r - l) + " pp";
+            c.metric = "Total THD";
+            if (! vL && ! vR)
+            {
+                c.lText = "no signal";
+            }
+            else
+            {
+                const float l = thd.getTotalThdPercent (THDMeasurement::Channel::L);
+                const float r = thd.getTotalThdPercent (THDMeasurement::Channel::R);
+                c.lText = "L " + pct3 (l);   c.lColour = anL;
+                c.rText = "R " + pct3 (r);   c.rColour = anR;
+            }
+            break;
         }
 
         case (int) Mode::IMDMeasurement:
@@ -925,10 +1034,19 @@ juce::String WTAnalyzerAudioProcessorEditor::computeImbalanceText() const
             const auto& imd = audioProcessor.imdMeasurement;
             const bool vL = imd.isValid (IMDMeasurement::Channel::L);
             const bool vR = imd.isValid (IMDMeasurement::Channel::R);
-            if (! vL && ! vR) return "IMD diff: no signal";
-            const float l = imd.getTotalImdPercent (IMDMeasurement::Channel::L);
-            const float r = imd.getTotalImdPercent (IMDMeasurement::Channel::R);
-            return "IMD diff: " + signed3 (r - l) + " pp";
+            c.metric = "Total IMD";
+            if (! vL && ! vR)
+            {
+                c.lText = "no signal";
+            }
+            else
+            {
+                const float l = imd.getTotalImdPercent (IMDMeasurement::Channel::L);
+                const float r = imd.getTotalImdPercent (IMDMeasurement::Channel::R);
+                c.lText = "L " + pct3 (l);   c.lColour = anL;
+                c.rText = "R " + pct3 (r);   c.rColour = anR;
+            }
+            break;
         }
 
         case (int) Mode::DirectImpulseIR:
@@ -936,23 +1054,19 @@ juce::String WTAnalyzerAudioProcessorEditor::computeImbalanceText() const
             const auto& ir = audioProcessor.impulseResponse;
             const int nL = ir.getDisplayLength (ImpulseResponse::Channel::L);
             const int nR = ir.getDisplayLength (ImpulseResponse::Channel::R);
-            const int n  = juce::jmin (nL, nR);
-            if (n <= 0) return "IR diff: no capture";
-
-            const auto& bufL = ir.getAveragedBuffer (ImpulseResponse::Channel::L);
-            const auto& bufR = ir.getAveragedBuffer (ImpulseResponse::Channel::R);
-
-            // Stride for long IRs so we never iterate more than ~100k
-            // samples per tick. Peaks in averaged IRs are wide enough
-            // that this gives a faithful max-abs reading.
-            const int stride = juce::jmax (1, n / 100000);
-            float maxAbs = 0.0f, maxSigned = 0.0f;
-            for (int i = 0; i < n; i += stride)
+            c.metric = "Captured IR RMS level";
+            if (nL <= 0 && nR <= 0)
             {
-                const float d = bufR[(size_t) i] - bufL[(size_t) i];
-                if (std::abs (d) > maxAbs) { maxAbs = std::abs (d); maxSigned = d; }
+                c.lText = "no capture";
             }
-            return "IR diff: max " + signed4 (maxSigned);
+            else
+            {
+                const float l = irRms (ir.getAveragedBuffer (ImpulseResponse::Channel::L), nL);
+                const float r = irRms (ir.getAveragedBuffer (ImpulseResponse::Channel::R), nR);
+                c.lText = "L " + val4 (l);   c.lColour = anL;
+                c.rText = "R " + val4 (r);   c.rColour = anR;
+            }
+            break;
         }
 
         case (int) Mode::FarinaIR:
@@ -960,23 +1074,23 @@ juce::String WTAnalyzerAudioProcessorEditor::computeImbalanceText() const
             const auto& f = audioProcessor.farinaIR;
             const int nL = f.getIRLength (FarinaIR::Channel::L);
             const int nR = f.getIRLength (FarinaIR::Channel::R);
-            const int n  = juce::jmin (nL, nR);
-            if (n <= 0) return "IR diff: no capture";
-
-            const auto& bufL = f.getIR (FarinaIR::Channel::L);
-            const auto& bufR = f.getIR (FarinaIR::Channel::R);
-
-            const int stride = juce::jmax (1, n / 100000);
-            float maxAbs = 0.0f, maxSigned = 0.0f;
-            for (int i = 0; i < n; i += stride)
+            c.metric = "Captured IR RMS level";
+            if (nL <= 0 && nR <= 0)
             {
-                const float d = bufR[(size_t) i] - bufL[(size_t) i];
-                if (std::abs (d) > maxAbs) { maxAbs = std::abs (d); maxSigned = d; }
+                c.lText = "no capture";
             }
-            return "IR diff: max " + signed4 (maxSigned);
+            else
+            {
+                const float l = irRms (f.getIR (FarinaIR::Channel::L), nL);
+                const float r = irRms (f.getIR (FarinaIR::Channel::R), nR);
+                c.lText = "L " + val4 (l);   c.lColour = anL;
+                c.rText = "R " + val4 (r);   c.rColour = anR;
+            }
+            break;
         }
     }
-    return {};
+
+    return c;
 }
 
 void WTAnalyzerAudioProcessorEditor::applyAnalysisMode (int modeIndex)
@@ -991,6 +1105,7 @@ void WTAnalyzerAudioProcessorEditor::applyAnalysisMode (int modeIndex)
     const bool wantsImdPath      = (modeIndex == (int) Mode::IMDMeasurement);
     const bool wantsIrPath       = (modeIndex == (int) Mode::DirectImpulseIR);
     const bool wantsFarinaPath   = (modeIndex == (int) Mode::FarinaIR);
+    const bool wantsStereoPath   = (modeIndex == (int) Mode::StereoImage);
 
     spectrumDisplay.setVisible (wantsSpectrumPath);
     cursorReadout  .setVisible (wantsSpectrumPath);
@@ -998,6 +1113,7 @@ void WTAnalyzerAudioProcessorEditor::applyAnalysisMode (int modeIndex)
     imdDisplay     .setVisible (wantsImdPath);
     impulseDisplay .setVisible (wantsIrPath);
     farinaDisplay  .setVisible (wantsFarinaPath);
+    stereoDisplay  .setVisible (wantsStereoPath);
 
     // The alias-view toggle row lives inside SpectrumDisplay (it's tied to
     // a specific mode within the shared spectrum panel) but its visibility
@@ -1013,16 +1129,26 @@ void WTAnalyzerAudioProcessorEditor::applyAnalysisMode (int modeIndex)
     farinaCaptureButton.setVisible (isFarinaMode);
     farinaClearButton  .setVisible (isFarinaMode);
 
-    // L / R / Diff toggles: visible in every mode that participates in
-    // stereo display today. Modes with dedicated panels (THD, IMD, IR,
-    // Farina) consume the same shared APVTS params - the toggle row
-    // stays in the readout strip and the panel-specific display reads
-    // the same flags.
+    // L / R channel toggles: visible in every mode that shows per-channel
+    // data. The Diff toggle is restricted to the bar / waveform modes
+    // (THD, IMD, IR, Farina) where per-harmonic / per-product / per-sample
+    // R-L difference is genuinely mode-specific. Spectrum modes (Generic
+    // Overlay, FR, Aliasing) no longer have a Diff toggle - dedicated
+    // stereo-difference analysis lives in the Stereo Image mode.
     const bool wantsStereoToggles = wantsSpectrumPath || wantsThdPath
                                   || wantsImdPath || wantsIrPath || wantsFarinaPath;
+    const bool wantsDiffToggle    = wantsThdPath || wantsImdPath
+                                  || wantsIrPath || wantsFarinaPath;
+
+    // Entering a spectrum mode while Diff was left engaged from a bar /
+    // waveform mode would leave L and R both off (Diff is exclusive),
+    // blanking the spectrum display. Restore the L+R view first.
+    if (wantsSpectrumPath && stereoDiffButton.getToggleState())
+        stereoDiffButton.setToggleState (false, juce::sendNotification);
+
     stereoLButton    .setVisible (wantsStereoToggles);
     stereoRButton    .setVisible (wantsStereoToggles);
-    stereoDiffButton .setVisible (wantsStereoToggles);
+    stereoDiffButton .setVisible (wantsDiffToggle);
     imbalanceReadout .setVisible (wantsStereoToggles);
 
     repaint();
@@ -1056,6 +1182,7 @@ void WTAnalyzerAudioProcessorEditor::resized()
     imdDisplay      .setUiScale (s);
     impulseDisplay  .setUiScale (s);
     farinaDisplay   .setUiScale (s);
+    stereoDisplay   .setUiScale (s);
     levelMetersPanel.setUiScale (s);
     latencyPanel    .setUiScale (s);
 
@@ -1116,14 +1243,15 @@ void WTAnalyzerAudioProcessorEditor::resized()
     readoutStrip.removeFromLeft (sx (8));
     readoutStrip.removeFromRight (sx (8));
     imbalanceReadout.setBounds (readoutStrip);
-    imbalanceReadout.setFont (juce::FontOptions (sf (11.0f)));
+    imbalanceReadout.setUiScale (s);
 
     bounds.removeFromBottom (sx (4));
 
-    // Spectrum, THD, IMD, IR and Farina share the same rect; visibility decides which is drawn.
+    // All mode panels share the same rect; visibility decides which is drawn.
     spectrumDisplay.setBounds (bounds);
     thdDisplay     .setBounds (bounds);
     imdDisplay     .setBounds (bounds);
     impulseDisplay .setBounds (bounds);
     farinaDisplay  .setBounds (bounds);
+    stereoDisplay  .setBounds (bounds);
 }

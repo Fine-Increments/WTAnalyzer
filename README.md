@@ -49,6 +49,15 @@ Pre-alpha. Working analysis modes:
   same params are instant). Same Export... button as Direct Impulse IR
   - the deconvolved IR saves as a 32-bit float stereo WAV ready for
   any convolution reverb.
+- **Stereo Image** - per-frequency stereo divergence: how much the
+  right and left channels differ in level at each frequency, on a
+  bipolar centred-on-zero plot (green centre line = balanced, lime
+  upward = R louder, mint downward = L louder). Its own Pre / Post /
+  Diff selector - Diff (default) isolates the device-added divergence
+  `(post_R - post_L) - (pre_R - pre_L)`, so a stereo-transparent
+  device reads flat regardless of how stereo the input was. The home
+  for stereo-specific analysis; spectral phase correlation and a
+  goniometer are planned to join it here.
 
 Both IR modes are shipped but currently bottlenecked by WTSynth as a
 source: the wavetable cycling model produces an impulse train at

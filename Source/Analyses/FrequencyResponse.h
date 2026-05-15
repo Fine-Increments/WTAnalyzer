@@ -24,13 +24,26 @@
 class FrequencyResponse
 {
 public:
-    // Bin magnitude below this (in dBFS) is considered too quiet to derive a
-    // meaningful response. Above this, the response is computed normally.
-    static constexpr float kMinValidPreDb  = -80.0f;
+    // Per-bin validity uses hysteresis: a bin becomes valid when pre rises
+    // above kValidEnterDb and stays valid until pre falls below
+    // kValidLeaveDb. The 20 dB gap prevents the bin-by-bin flicker that
+    // happens when pre sits right at the threshold and noise pushes it
+    // back and forth.
+    static constexpr float kValidEnterDb   = -80.0f;
+    static constexpr float kValidLeaveDb   = -100.0f;
+
+    // Backwards compatibility alias.
+    static constexpr float kMinValidPreDb  = kValidEnterDb;
 
     // Sentinel value written to bins where no valid measurement exists.
-    // SpectrumDisplay treats this as a "break the path" signal.
     static constexpr float kNoMeasurementDb = -200.0f;
+
+    // Temporal smoothing factor for the per-bin EMA (responseDb_t =
+    // alpha * raw + (1 - alpha) * prev). At the spectrum hop rate
+    // (~47 Hz at 48 kHz) this gives a ~130 ms time constant - enough
+    // to suppress FFT bin-to-bin variance without making the trace
+    // sluggish on parameter changes.
+    static constexpr float kSmoothingAlpha = 0.15f;
 
     // Called once after sample rate / spectrum size is known. Sizes the
     // internal buffers; allocates. Not real-time-safe.
@@ -54,7 +67,13 @@ public:
     int  getNumBins()                              const noexcept { return (int) responseDb.size(); }
 
 private:
+    // All three arrays hold temporally-smoothed values (EMA per bin).
     std::vector<float> responseDb;       // L channel  (post_L - pre_L)
     std::vector<float> responseDb_R;     // R channel  (post_R - pre_R)
     std::vector<float> responseDb_Diff;  // R - L      (channel asymmetry, dB)
+
+    // Per-bin hysteresis state - tracks whether each channel's pre level
+    // is currently above the valid threshold band.
+    std::vector<char> binValidL;
+    std::vector<char> binValidR;
 };

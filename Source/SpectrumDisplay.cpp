@@ -349,23 +349,13 @@ void SpectrumDisplay::paint (juce::Graphics& g)
     const float logMax   = std::log10 (viewMaxFreq);
     const float logRange = logMax - logMin;
 
-    // L / R / Diff toggles. Diff is an exclusive view (when on, L and R
-    // are forced off by the editor's toggle handlers), so diffMode here
-    // can just check showDiff. In diff mode the Y axis switches to a
-    // bipolar centred-on-zero range so the R - L trace is meaningful;
-    // the user's regular mouse-zoomed range is preserved for the next
-    // L/R view.
-    const bool showL    = *processor.apvts.getRawParameterValue ("showChannelL")    > 0.5f;
-    const bool showR    = *processor.apvts.getRawParameterValue ("showChannelR")    > 0.5f;
-    const bool showDiff = *processor.apvts.getRawParameterValue ("showChannelDiff") > 0.5f;
-    const bool diffMode = showDiff;
+    // L / R channel toggles. The spectrum modes (Generic Overlay, FR,
+    // Aliasing) show per-channel traces; stereo difference analysis lives
+    // in its own dedicated Stereo Image mode, not here.
+    const bool showL = *processor.apvts.getRawParameterValue ("showChannelL") > 0.5f;
+    const bool showR = *processor.apvts.getRawParameterValue ("showChannelR") > 0.5f;
 
-    constexpr float kDiffMinDb = -30.0f;
-    constexpr float kDiffMaxDb = +30.0f;
-
-    const float effMinDb = diffMode ? kDiffMinDb : viewMinDb;
-    const float effMaxDb = diffMode ? kDiffMaxDb : viewMaxDb;
-    const float dbRange  = effMaxDb - effMinDb;
+    const float dbRange = viewMaxDb - viewMinDb;
 
     auto freqToX = [&] (float freq) -> float
     {
@@ -375,7 +365,7 @@ void SpectrumDisplay::paint (juce::Graphics& g)
 
     auto dbToY = [&] (float db) -> float
     {
-        const float t = (db - effMinDb) / dbRange;
+        const float t = (db - viewMinDb) / dbRange;
         return (float) plotArea.getY() + (1.0f - t) * (float) plotArea.getHeight();
     };
 
@@ -411,7 +401,7 @@ void SpectrumDisplay::paint (juce::Graphics& g)
         };
         for (float db : kDbGrid)
         {
-            if (db < effMinDb || db > effMaxDb) continue;
+            if (db < viewMinDb || db > viewMaxDb) continue;
             const float y = dbToY (db);
             g.drawLine ((float) plotArea.getX(), y, (float) plotArea.getRight(), y, sf (1.0f));
         }
@@ -461,7 +451,7 @@ void SpectrumDisplay::paint (juce::Graphics& g)
         }};
         for (auto label : kDbLabels)
         {
-            if (label.db < effMinDb || label.db > effMaxDb) continue;
+            if (label.db < viewMinDb || label.db > viewMaxDb) continue;
             const float y = dbToY (label.db);
             const int textHeight = sx (12);
             juce::Rectangle<int> r (labelGutterLeft.getX(),
@@ -511,7 +501,7 @@ void SpectrumDisplay::paint (juce::Graphics& g)
                 if (f < viewMinFreq) continue;
                 if (f > viewMaxFreq) break;
 
-                const float clampedDb = juce::jlimit (effMinDb, effMaxDb, spec[bin]);
+                const float clampedDb = juce::jlimit (viewMinDb, viewMaxDb, spec[bin]);
                 const float x = freqToX (f);
                 const float y = dbToY (clampedDb);
 
@@ -546,7 +536,7 @@ void SpectrumDisplay::paint (juce::Graphics& g)
                     continue;
                 }
 
-                const float clampedDb = juce::jlimit (effMinDb, effMaxDb, v);
+                const float clampedDb = juce::jlimit (viewMinDb, viewMaxDb, v);
                 const float x = freqToX (f);
                 const float y = dbToY (clampedDb);
 
@@ -558,81 +548,10 @@ void SpectrumDisplay::paint (juce::Graphics& g)
             g.strokePath (path, juce::PathStrokeType (sf (strokeW)));
         };
 
-        // Sign-coloured bipolar trace renderer. Used in Diff mode where the
-        // value is R - L per bin and the trace can be positive (R louder)
-        // or negative (L louder). Draws the full path twice with clipping:
-        // upper-half clip stroked in the R-variant colour, lower-half clip
-        // stroked in the L-master colour. Where the trace crosses zero,
-        // each segment ends up rendered in the right half automatically.
-        // `valueAt(bin)` returns the bipolar value (R - L) or
-        // kNoMeasurementDb-style sentinel (caller decides the threshold).
-        auto plotBipolarTrace = [&] (auto valueAt, int count,
-                                     juce::Colour posColour, juce::Colour negColour,
-                                     float sentinelFloor, float strokeW)
-        {
-            juce::Path path;
-            bool       hasOpenSubPath = false;
-
-            for (int bin = 1; bin < count; ++bin)
-            {
-                const float f = (float) bin * binFreqScale;
-                if (f < viewMinFreq) continue;
-                if (f > viewMaxFreq) break;
-
-                const float v = valueAt (bin);
-                if (v <= sentinelFloor + 0.5f)
-                {
-                    hasOpenSubPath = false;
-                    continue;
-                }
-
-                const float clampedDb = juce::jlimit (effMinDb, effMaxDb, v);
-                const float x = freqToX (f);
-                const float y = dbToY (clampedDb);
-
-                if (! hasOpenSubPath) { path.startNewSubPath (x, y); hasOpenSubPath = true; }
-                else                  { path.lineTo          (x, y); }
-            }
-
-            const int zeroY = juce::roundToInt (dbToY (0.0f));
-
-            // Upper half (y < zeroY): trace is positive, R is louder -> posColour.
-            {
-                juce::Graphics::ScopedSaveState save (g);
-                g.reduceClipRegion (plotArea.getX(),
-                                    plotArea.getY(),
-                                    plotArea.getWidth(),
-                                    juce::jmax (0, zeroY - plotArea.getY()));
-                g.setColour (posColour);
-                g.strokePath (path, juce::PathStrokeType (sf (strokeW)));
-            }
-
-            // Lower half (y > zeroY): trace is negative, L is louder -> negColour.
-            {
-                juce::Graphics::ScopedSaveState save (g);
-                g.reduceClipRegion (plotArea.getX(),
-                                    zeroY,
-                                    plotArea.getWidth(),
-                                    juce::jmax (0, plotArea.getBottom() - zeroY));
-                g.setColour (negColour);
-                g.strokePath (path, juce::PathStrokeType (sf (strokeW)));
-            }
-        };
-
         const int activeAnalysisIdx = (int) *processor.apvts.getRawParameterValue ("activeAnalysis");
         const bool inAliasingMode  = activeAnalysisIdx
                                   == (int) WTAnalyzerAudioProcessor::AnalysisMode::AliasingDetection;
         const int aliasView = inAliasingMode ? aliasingViewIndex() : 0;
-
-        // In Diff mode draw a dim zero baseline so the bipolar trace has a
-        // visual reference. Skipped in heatmap mode (Y axis is sweep pos).
-        if (diffMode && ! sweepHeatmapMode)
-        {
-            g.setColour (juce::Colour (0xff444a52));
-            const float yZero = dbToY (0.0f);
-            g.drawLine ((float) plotArea.getX(), yZero,
-                        (float) plotArea.getRight(), yZero, sf (1.0f));
-        }
 
         // FR sweep-heatmap mode keeps its own L-only render path - the
         // toggles don't apply here yet (heatmap diff is a future change).
@@ -653,37 +572,10 @@ void SpectrumDisplay::paint (juce::Graphics& g)
             g.setColour (juce::Colours::whitesmoke.withAlpha (0.7f));
             g.drawLine ((float) plotArea.getX(), y, (float) plotArea.getRight(), y, sf (1.2f));
         }
-        else if (diffMode && ! inAliasingMode)
-        {
-            // Generic Overlay / FR mode in Diff view: show pre_R - pre_L
-            // and post_R - post_L spectrum diffs as sign-coloured bipolar
-            // traces. Each diff uses its channel's L/R colour pair so the
-            // semantic identity (pre vs post) stays clear, while sign
-            // colour reveals which channel is louder per bin.
-            plotBipolarTrace ([&] (int bin) {
-                return processor.preSpectrumDb_R[bin] - processor.preSpectrumDb[bin];
-            }, N, WTColors::preEffect_R, WTColors::preEffect, -1000.0f, 1.2f);
-
-            plotBipolarTrace ([&] (int bin) {
-                return processor.postSpectrumDb_R[bin] - processor.postSpectrumDb[bin];
-            }, N, WTColors::postEffect_R, WTColors::postEffect, -1000.0f, 1.2f);
-        }
-        else if (diffMode && inAliasingMode && aliasView == 1)   // Aliasing Pre diff
-        {
-            plotBipolarTrace ([&] (int bin) {
-                return processor.preSpectrumDb_R[bin] - processor.preSpectrumDb[bin];
-            }, N, WTColors::preEffect_R, WTColors::preEffect, -1000.0f, 1.2f);
-        }
-        else if (diffMode && inAliasingMode && aliasView == 2)   // Aliasing Post diff
-        {
-            plotBipolarTrace ([&] (int bin) {
-                return processor.postSpectrumDb_R[bin] - processor.postSpectrumDb[bin];
-            }, N, WTColors::postEffect_R, WTColors::postEffect, -1000.0f, 1.2f);
-        }
         else if (! inAliasingMode)
         {
-            // Normal (non-Diff) view. Draw order: R first (underneath),
-            // L on top. See feedback-stereo-lr-diff-convention memory.
+            // Draw order: R first (underneath), L on top.
+            // See feedback-stereo-lr-diff-convention memory.
             if (showR)
             {
                 plotTrace (processor.preSpectrumDb_R,  WTColors::preEffect_R);
@@ -707,20 +599,37 @@ void SpectrumDisplay::paint (juce::Graphics& g)
         }
 
         // When FrequencyResponse mode is active and we are NOT in sweep
-        // heatmap mode, overlay the transfer-function trace per channel
-        // plus the optional Diff trace. Bins flagged as "no measurement"
-        // (pre too quiet) break the path so curves don't fake values
-        // where none exist. Draw order: R first (underneath), L on top,
-        // Diff overlaid on top of both per the stereo convention.
+        // heatmap mode, overlay the transfer-function trace per channel.
+        // Draw order: R first (underneath), L on top.
         if (! sweepHeatmapMode
             && activeAnalysisIdx == (int) WTAnalyzerAudioProcessor::AnalysisMode::FrequencyResponse)
         {
             const float binFreqScale = sr / (float) WTAnalyzerAudioProcessor::kSpectrumFftSize;
 
+            // Hybrid rendering: outside the signal range (frequencies
+            // where pre never had energy) the trace sits at 0 dB.
+            // Inside the signal range, between-harmonic invalid bins are
+            // SKIPPED so the trace connects valid bins directly - sparse
+            // harmonic content reads as a smooth EQ curve through the
+            // harmonic peaks instead of a fast 0-to-measurement-to-0
+            // comb. (Aliasing residue keeps its own sparse-trace
+            // behaviour - its data is intentionally regional.)
             auto drawFrTrace = [&] (const std::vector<float>& response,
                                     juce::Colour colour)
             {
                 const int M = (int) response.size();
+                const float sentFloor = FrequencyResponse::kNoMeasurementDb + 0.5f;
+
+                int loBin = -1, hiBin = -1;
+                for (int bin = 1; bin < M; ++bin)
+                {
+                    if (response[(size_t) bin] > sentFloor)
+                    {
+                        if (loBin < 0) loBin = bin;
+                        hiBin = bin;
+                    }
+                }
+
                 juce::Path path;
                 bool       hasOpenSubPath = false;
 
@@ -731,14 +640,15 @@ void SpectrumDisplay::paint (juce::Graphics& g)
                     if (f > viewMaxFreq) break;
 
                     const float db = response[(size_t) bin];
+                    const bool  valid = db > sentFloor;
+                    const bool  inSignalRange = loBin >= 0 && bin >= loBin && bin <= hiBin;
 
-                    if (db <= FrequencyResponse::kNoMeasurementDb + 0.5f)
-                    {
-                        hasOpenSubPath = false;
-                        continue;
-                    }
+                    float drawDb;
+                    if (valid)                drawDb = db;
+                    else if (! inSignalRange) drawDb = 0.0f;
+                    else                      continue;   // gap inside signal range - interpolate
 
-                    const float clampedDb = juce::jlimit (effMinDb, effMaxDb, db);
+                    const float clampedDb = juce::jlimit (viewMinDb, viewMaxDb, drawDb);
                     const float x = freqToX (f);
                     const float y = dbToY (clampedDb);
 
@@ -750,26 +660,10 @@ void SpectrumDisplay::paint (juce::Graphics& g)
                 g.strokePath (path, juce::PathStrokeType (sf (1.6f)));
             };
 
-            if (diffMode)
-            {
-                // FR Diff: render the precomputed FR_R - FR_L array as a
-                // sign-coloured bipolar trace. analysis_R (lighter green)
-                // for positive bins (R has more gain), analysis (master
-                // chartreuse) for negative bins (L has more gain).
-                const auto& diff = processor.frequencyResponse.getResponseDb_Diff();
-                const int M = (int) diff.size();
-                plotBipolarTrace ([&] (int bin) { return diff[(size_t) bin]; },
-                                  M,
-                                  WTColors::analysis_R, WTColors::analysis,
-                                  FrequencyResponse::kNoMeasurementDb, 1.6f);
-            }
-            else
-            {
-                if (showR)
-                    drawFrTrace (processor.frequencyResponse.getResponseDb_R(), WTColors::analysis_R);
-                if (showL)
-                    drawFrTrace (processor.frequencyResponse.getResponseDb(),   WTColors::analysis);
-            }
+            if (showR)
+                drawFrTrace (processor.frequencyResponse.getResponseDb_R(), WTColors::analysis_R);
+            if (showL)
+                drawFrTrace (processor.frequencyResponse.getResponseDb(),   WTColors::analysis);
         }
 
         // AliasingDetection composite view: the input signal (pre)
@@ -789,35 +683,19 @@ void SpectrumDisplay::paint (juce::Graphics& g)
             const auto& liveR = processor.aliasingDetection.getLiveDifferentialDb_R();
             const auto& peakL = processor.aliasingDetection.getPeakDifferentialDb();
             const auto& peakR = processor.aliasingDetection.getPeakDifferentialDb_R();
-            const auto& liveD = processor.aliasingDetection.getLiveDifferentialDb_Diff();
-            const auto& peakD = processor.aliasingDetection.getPeakDifferentialDb_Diff();
 
-            if (diffMode)
-            {
-                // Diff view: alias_R - alias_L as a sign-coloured bipolar
-                // trace. The pre trace is omitted - in Diff view the user
-                // is focused on channel asymmetry, not absolute level.
-                const float* aliasD = (isAliasingHolding ? peakD : liveD).data();
-                plotBipolarTrace ([&] (int bin) { return aliasD[bin]; },
-                                  N,
-                                  WTColors::analysis_R, WTColors::analysis,
-                                  AliasingDetection::kNoMeasurementDb, 1.6f);
-            }
-            else
-            {
-                // Pre trace is always live - Hold only applies to the alias
-                // residue, since the user-relevant accumulated measurement is
-                // "what aliasing did the device produce across the sweep",
-                // not "where was the input signal".
-                if (showR) plotTrace (processor.preSpectrumDb_R, WTColors::preEffect_R);
-                if (showL) plotTrace (processor.preSpectrumDb,   WTColors::preEffect);
+            // Pre trace is always live - Hold only applies to the alias
+            // residue, since the user-relevant accumulated measurement is
+            // "what aliasing did the device produce across the sweep",
+            // not "where was the input signal".
+            if (showR) plotTrace (processor.preSpectrumDb_R, WTColors::preEffect_R);
+            if (showL) plotTrace (processor.preSpectrumDb,   WTColors::preEffect);
 
-                const float* aliasR = (isAliasingHolding ? peakR : liveR).data();
-                const float* aliasL = (isAliasingHolding ? peakL : liveL).data();
+            const float* aliasR = (isAliasingHolding ? peakR : liveR).data();
+            const float* aliasL = (isAliasingHolding ? peakL : liveL).data();
 
-                if (showR) plotSparseTrace (aliasR, N, WTColors::analysis_R, 1.6f);
-                if (showL) plotSparseTrace (aliasL, N, WTColors::analysis,   1.6f);
-            }
+            if (showR) plotSparseTrace (aliasR, N, WTColors::analysis_R, 1.6f);
+            if (showL) plotSparseTrace (aliasL, N, WTColors::analysis,   1.6f);
         }
 
         // HUD: peak alias readout in the top-right of the plot, shown
