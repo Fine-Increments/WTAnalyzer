@@ -73,6 +73,10 @@ WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioP
     addAndMakeVisible (levelMetersPanel);
     addAndMakeVisible (latencyPanel);
 
+    // Sidechain notice is added last so it sits on top of every display
+    // panel. Hidden until the timer sees the sidechain go inactive.
+    addChildComponent (sidechainNotice);
+
     // Analysis-mode selector. The ComboBox is populated from the parameter's
     // own choice list, so adding an analysis to the APVTS layout in
     // PluginProcessor automatically extends this dropdown.
@@ -788,47 +792,48 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
                 "Stereo Image\n"
                 "============\n\n"
                 "What it measures\n"
-                "  Per-frequency stereo divergence - how much the right and left\n"
-                "  channels differ in level at each frequency. This is the home for\n"
-                "  stereo-specific analysis; the divergence view is the first of\n"
-                "  several planned stereo visualisations (spectral phase correlation\n"
-                "  and a goniometer are coming).\n\n"
+                "  The home for stereo-specific analysis. A view selector picks\n"
+                "  the visualisation: Divergence (shipped), Correlation (planned),\n"
+                "  Goniometer (planned).\n\n"
                 "Input\n"
                 "  Any broadband signal - pink noise, a sweep, or wavetable content\n"
                 "  that excites the spectrum. The richer the input's frequency\n"
                 "  coverage, the more of the divergence curve is measurable.\n\n"
-                "Views (Diff / Pre / Post)\n"
-                "  Diff (default): the divergence the DEVICE introduced -\n"
-                "    (post_R - post_L) minus (pre_R - pre_L). A stereo-transparent\n"
-                "    device reads a flat green line here no matter how stereo the\n"
-                "    input already was. Any departure from the line is the device's\n"
-                "    own contribution to the stereo image.\n"
-                "  Pre:  the raw input signal's stereo image (pre_R - pre_L).\n"
-                "  Post: the raw output signal's stereo image (post_R - post_L).\n\n"
-                "  Pre and Diff require the sidechain (pre-effect) input wired. If\n"
-                "  it isn't connected, the panel says so rather than drawing a\n"
-                "  meaningless flat line - check your sidechain routing.\n\n"
+                "Divergence view\n"
+                "  Per-frequency device-added stereo divergence: how much the\n"
+                "  device under test made the right and left channels differ.\n"
+                "  For each channel the device's effect is FR_x = post_x - pre_x;\n"
+                "  the plotted value is |FR_R - FR_L| (how much the channels were\n"
+                "  decorrelated) signed toward the channel the device acted on\n"
+                "  MORE. A cut or a boost on the right channel both read upward\n"
+                "  (R) - boost-vs-cut polarity is deliberately ignored, only\n"
+                "  'how much, and to which channel' matters.\n\n"
                 "How to read it\n"
-                "  The green centre line is zero divergence - L and R agree. The\n"
-                "  trace lifts UP into lime where the right channel is louder, and\n"
-                "  DOWN into mint where the left channel is louder. The Y axis is\n"
-                "  bipolar dB: the magnitude is the level difference, the side\n"
-                "  tells you which channel. A mono signal through a stereo-\n"
-                "  transparent device sits flat on the green line.\n\n"
-                "  This is a level-divergence meter, not phase correlation -\n"
-                "  it shows where and how much a device skews the stereo balance\n"
-                "  (a mid-side EQ move, a one-channel boost, a frequency-dependent\n"
-                "  widener). Phase correlation is a separate planned view.\n\n"
+                "  The green centre line is zero divergence - the device left the\n"
+                "  stereo image untouched. The trace lifts UP into lime where the\n"
+                "  device acted on the right channel, DOWN into mint where it\n"
+                "  acted on the left. The Y axis is bipolar dB ('dB R' above, 'dB\n"
+                "  L' below). A stereo-transparent device reads a flat green line\n"
+                "  no matter how stereo the input already was - the FR-difference\n"
+                "  cancels the input's own stereo content.\n\n"
+                "  This is a level-divergence meter, not phase correlation - it\n"
+                "  shows where and how much a device skews the stereo balance (a\n"
+                "  mid-side EQ move, a one-channel boost, a frequency-dependent\n"
+                "  widener). Phase correlation is the planned Correlation view.\n\n"
+                "Correlation / Goniometer views\n"
+                "  Planned. Correlation will show per-frequency phase correlation;\n"
+                "  Goniometer a time-domain L-vs-R XY scope. Selecting them today\n"
+                "  shows a placeholder.\n\n"
                 "2D Sweep Capture\n"
                 "  Not yet implemented for this mode. When added, the heatmap X\n"
                 "  axis would be log frequency, Y the sweep position, colour the\n"
                 "  signed divergence (bipolar - one channel's colour for each\n"
                 "  direction).\n\n"
                 "Stereo (L / R / Diff)\n"
-                "  This entire mode IS the stereo analysis - it has its own\n"
-                "  Pre / Post / Diff selector in the panel. The shared L / R / Diff\n"
-                "  toggle row is hidden here because every view is inherently a\n"
-                "  stereo comparison; there is no single-channel view to select.\n";
+                "  This entire mode IS the stereo analysis - every view is\n"
+                "  inherently a stereo comparison, so the shared L / R / Diff\n"
+                "  toggle row is hidden here. The panel's own selector picks the\n"
+                "  visualisation instead.\n";
     }
     return "No help available for this mode.";
 }
@@ -841,6 +846,11 @@ void WTAnalyzerAudioProcessorEditor::timerCallback()
         applyAnalysisMode (current);
 
     updateImbalanceReadout();
+
+    // Surface the sidechain-not-connected notice over whatever panel is
+    // active. WTAnalyzer can't do its pre-vs-post job without it, so the
+    // alert is mode-independent.
+    sidechainNotice.setVisible (! audioProcessor.preBusActive.load (std::memory_order_relaxed));
 }
 
 void WTAnalyzerAudioProcessorEditor::updateImbalanceReadout()
@@ -1183,6 +1193,7 @@ void WTAnalyzerAudioProcessorEditor::resized()
     impulseDisplay  .setUiScale (s);
     farinaDisplay   .setUiScale (s);
     stereoDisplay   .setUiScale (s);
+    sidechainNotice .setUiScale (s);
     levelMetersPanel.setUiScale (s);
     latencyPanel    .setUiScale (s);
 
@@ -1254,4 +1265,7 @@ void WTAnalyzerAudioProcessorEditor::resized()
     impulseDisplay .setBounds (bounds);
     farinaDisplay  .setBounds (bounds);
     stereoDisplay  .setBounds (bounds);
+
+    // The sidechain notice covers the whole display rect.
+    sidechainNotice.setBounds (bounds);
 }

@@ -48,6 +48,52 @@ private:
 };
 
 //==============================================================================
+// Full-panel notice shown over the active display whenever the sidechain
+// (pre-effect) input is not connected. WTAnalyzer's entire premise is a
+// pre-vs-post comparison, so without the sidechain no mode can do its job -
+// this overlay tells the user consistently, in every mode, rather than
+// each panel quietly drawing a meaningless flat result.
+class SidechainNotice  : public juce::Component
+{
+public:
+    SidechainNotice()
+    {
+        setOpaque (true);
+        // Swallow clicks so stray presses don't reach the hidden panel
+        // controls underneath.
+        setInterceptsMouseClicks (true, false);
+    }
+
+    void setUiScale (float s) noexcept { uiScale = s; repaint(); }
+
+    void paint (juce::Graphics& g) override
+    {
+        g.fillAll (juce::Colour (0xff111213));
+
+        auto area = getLocalBounds().reduced (juce::roundToInt (24.0f * uiScale));
+
+        g.setColour (juce::Colours::whitesmoke);
+        g.setFont (juce::FontOptions (16.0f * uiScale));
+        auto headline = area.removeFromTop (juce::roundToInt (28.0f * uiScale));
+        g.drawText ("Sidechain not connected", headline,
+                    juce::Justification::centred, false);
+
+        g.setColour (juce::Colours::grey);
+        g.setFont (juce::FontOptions (12.0f * uiScale));
+        g.drawFittedText (
+            "Route the dry (pre-effect) signal into WTAnalyzer's sidechain input. "
+            "Every analysis mode compares the pre-effect and post-effect signals, "
+            "so the sidechain must be wired for any measurement to work.",
+            area, juce::Justification::centredTop, 3);
+    }
+
+private:
+    float uiScale = 1.0f;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SidechainNotice)
+};
+
+//==============================================================================
 // Small inline stereo-imbalance readout. Shows a grey metric label followed
 // by an L value and an R value, each tinted with its channel colour. Painted
 // via AttributedString so the two values can carry different colours within
@@ -149,6 +195,10 @@ private:
 
     // Stereo Image display path - per-frequency stereo divergence.
     StereoDisplay    stereoDisplay;
+
+    // Shown over whichever panel is active when the sidechain input is
+    // not connected. Visibility is driven from the timer.
+    SidechainNotice  sidechainNotice;
 
     LevelMetersPanel levelMetersPanel;
     LatencyPanel     latencyPanel;

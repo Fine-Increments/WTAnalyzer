@@ -2,29 +2,30 @@
   ==============================================================================
 
     StereoAnalysis.h
-    Per-frequency stereo divergence analysis.
+    Per-frequency device-added stereo divergence.
 
-    Divergence at a bin is the level difference between the right and left
-    channels of a signal: R_dB - L_dB. Zero means the channels match
-    (mono / fully correlated in level at that frequency); positive means R
-    is louder, negative means L is louder.
+    Divergence at a bin measures how much the device under test made the
+    left and right channels differ. For each channel the device's effect
+    is FR_x = post_x - pre_x. The reported value is:
 
-    Three views are produced from each spectrum frame:
+      magnitude = |FR_R - FR_L|   - how much the device decorrelated the
+                                    two channels at that frequency.
+      sign      = + if |FR_R| >= |FR_L|, else -   - the channel the device
+                                    acted on MORE. Boost-vs-cut polarity is
+                                    deliberately NOT encoded: a cut to R and
+                                    a boost to R both read in the R (+)
+                                    direction.
 
-      - Pre:    pre_R  - pre_L   - the input signal's own stereo image.
-      - Post:   post_R - post_L  - the output signal's stereo image.
-      - Diff:   (post_R - post_L) - (pre_R - pre_L) - the divergence the
-                DEVICE introduced. A stereo-transparent device reads 0
-                here regardless of how stereo the input already was.
+    A stereo-transparent device reads 0 regardless of how stereo the input
+    already was - the FR-difference cancels the input's own stereo content.
 
-    Diff is the canonical view (it isolates the device). Pre and Post are
-    raw sanity checks. All three are EMA-smoothed per bin so the trace is
-    stable on complex / noisy signals. Bins with no signal carry the
-    kNoMeasurementDb sentinel so the display can rest the trace on its
-    zero-divergence centre line there rather than draw noise.
+    Per-channel responses are EMA-smoothed first; the signed divergence is
+    derived from the smoothed pair so its sign stays stable near a
+    symmetric tie. Bins with no signal carry the kNoMeasurementDb sentinel
+    so the display rests the trace on its zero centre line there.
 
     Consumes the existing pre/post spectrum FFT dB arrays - no new DSP
-    stream, same derived-measurement pattern as FrequencyResponse.
+    stream. Drives the Stereo Image mode's Divergence sub-view.
 
   ==============================================================================
 */
@@ -50,38 +51,25 @@ public:
     // hop rate - smooth enough for a steady-state divergence meter.
     static constexpr float kSmoothingAlpha = 0.15f;
 
-    enum class View { Diff, Pre, Post };
-
     void prepare (int numBins);
     void reset();
 
-    // Computes the pre / post / device divergence arrays from the four
-    // spectrum dB arrays. Real-time-safe.
+    // Computes the device-added stereo divergence from the four spectrum
+    // dB arrays. Real-time-safe.
     void update (const float* preDbL,  const float* preDbR,
                  const float* postDbL, const float* postDbR);
 
-    const std::vector<float>& getPreDivergence()    const noexcept { return preDiv; }
-    const std::vector<float>& getPostDivergence()   const noexcept { return postDiv; }
-    const std::vector<float>& getDeviceDivergence() const noexcept { return deviceDiv; }
+    const std::vector<float>& getDivergence() const noexcept { return divergence; }
 
-    // View-selected accessor for the display.
-    const std::vector<float>& getDivergence (View v) const noexcept
-    {
-        switch (v)
-        {
-            case View::Pre:  return preDiv;
-            case View::Post: return postDiv;
-            case View::Diff: return deviceDiv;
-        }
-        return deviceDiv;
-    }
-
-    int getNumBins() const noexcept { return (int) preDiv.size(); }
+    int getNumBins() const noexcept { return (int) divergence.size(); }
 
 private:
-    std::vector<float> preDiv;       // pre_R - pre_L,  EMA-smoothed
-    std::vector<float> postDiv;      // post_R - post_L, EMA-smoothed
-    std::vector<float> deviceDiv;    // device-added,    EMA-smoothed
+    std::vector<float> divergence;   // signed |FR_R - FR_L|, per bin
+
+    // Per-channel device response (post - pre), EMA-smoothed. divergence
+    // is derived from this smoothed pair each frame so its sign is stable.
+    std::vector<float> frLSmoothed;
+    std::vector<float> frRSmoothed;
 
     // Per-bin hysteresis state for the pre and post signals.
     std::vector<char>  preHasSignal;

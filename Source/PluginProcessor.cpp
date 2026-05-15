@@ -92,14 +92,13 @@ WTAnalyzerAudioProcessor::createParameterLayout()
         "IMD Bars by Hz",
         false));
 
-    // Stereo Image view: which divergence to plot. Diff (default) is the
-    // device-added stereo divergence; Pre / Post show the raw input and
-    // output stereo image as sanity checks. Index order matches
-    // StereoAnalysis::View (Diff=0, Pre=1, Post=2).
+    // Stereo Image sub-view selector. Divergence (default) is the
+    // per-frequency device-added stereo divergence. Correlation and
+    // Goniometer are planned sibling visualisations sharing this panel.
     layout.add (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { "stereoView", 1 },
         "Stereo Image View",
-        juce::StringArray { "Diff", "Pre", "Post" },
+        juce::StringArray { "Divergence", "Correlation", "Goniometer" },
         0));
 
     // Impulse-response window length in milliseconds. Maximum is 120000

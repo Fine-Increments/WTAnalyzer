@@ -38,9 +38,9 @@ StereoDisplay::StereoDisplay (WTAnalyzerAudioProcessor& proc)
         };
     };
 
-    configureViewButton (diffButton, 0);
-    configureViewButton (preButton,  1);
-    configureViewButton (postButton, 2);
+    configureViewButton (divergenceButton,  0);
+    configureViewButton (correlationButton, 1);
+    configureViewButton (goniometerButton,  2);
 
     processor.apvts.addParameterListener ("stereoView", this);
     syncViewButtons();
@@ -80,18 +80,18 @@ void StereoDisplay::parameterChanged (const juce::String& parameterID, float /*n
 void StereoDisplay::syncViewButtons()
 {
     const int idx = (int) *processor.apvts.getRawParameterValue ("stereoView");
-    diffButton.setToggleState (idx == 0, juce::dontSendNotification);
-    preButton .setToggleState (idx == 1, juce::dontSendNotification);
-    postButton.setToggleState (idx == 2, juce::dontSendNotification);
+    divergenceButton .setToggleState (idx == 0, juce::dontSendNotification);
+    correlationButton.setToggleState (idx == 1, juce::dontSendNotification);
+    goniometerButton .setToggleState (idx == 2, juce::dontSendNotification);
 }
 
-StereoAnalysis::View StereoDisplay::currentView() const noexcept
+StereoDisplay::SubView StereoDisplay::currentSubView() const noexcept
 {
     switch ((int) *processor.apvts.getRawParameterValue ("stereoView"))
     {
-        case 1:  return StereoAnalysis::View::Pre;
-        case 2:  return StereoAnalysis::View::Post;
-        default: return StereoAnalysis::View::Diff;
+        case 1:  return SubView::Correlation;
+        case 2:  return SubView::Goniometer;
+        default: return SubView::Divergence;
     }
 }
 
@@ -101,16 +101,16 @@ void StereoDisplay::resized()
     auto header = bounds.removeFromTop (sx (36));
 
     // View selector centred in the header band.
-    const int buttonW = sx (56);
+    const int buttonW = sx (86);
     const int buttonH = sx (22);
     const int spacing = sx (6);
     const int totalW  = buttonW * 3 + spacing * 2;
     const int startX  = header.getCentreX() - totalW / 2;
     const int buttonY = header.getCentreY() - buttonH / 2;
 
-    diffButton.setBounds (startX,                          buttonY, buttonW, buttonH);
-    preButton .setBounds (startX +     (buttonW + spacing), buttonY, buttonW, buttonH);
-    postButton.setBounds (startX + 2 * (buttonW + spacing), buttonY, buttonW, buttonH);
+    divergenceButton .setBounds (startX,                           buttonY, buttonW, buttonH);
+    correlationButton.setBounds (startX +     (buttonW + spacing), buttonY, buttonW, buttonH);
+    goniometerButton .setBounds (startX + 2 * (buttonW + spacing), buttonY, buttonW, buttonH);
 }
 
 void StereoDisplay::paint (juce::Graphics& g)
@@ -121,7 +121,26 @@ void StereoDisplay::paint (juce::Graphics& g)
     g.fillRect (bounds);
 
     bounds.removeFromTop (sx (36));   // header band - owned by the view buttons
-    drawDivergence (g, bounds.reduced (sx (8), sx (8)));
+    auto plotArea = bounds.reduced (sx (8), sx (8));
+
+    switch (currentSubView())
+    {
+        case SubView::Divergence:  drawDivergence (g, plotArea); break;
+        case SubView::Correlation: drawPlaceholder (g, plotArea, "Correlation"); break;
+        case SubView::Goniometer:  drawPlaceholder (g, plotArea, "Goniometer");  break;
+    }
+}
+
+void StereoDisplay::drawPlaceholder (juce::Graphics& g, juce::Rectangle<int> plotArea,
+                                     const juce::String& title)
+{
+    g.setColour (juce::Colour (0xff181a1d));
+    g.fillRect (plotArea);
+
+    g.setColour (juce::Colours::grey);
+    g.setFont (juce::FontOptions (sf (13.0f)));
+    g.drawText (title + " - not yet implemented",
+                plotArea, juce::Justification::centred, false);
 }
 
 void StereoDisplay::drawDivergence (juce::Graphics& g, juce::Rectangle<int> area)
@@ -194,27 +213,10 @@ void StereoDisplay::drawDivergence (juce::Graphics& g, juce::Rectangle<int> area
         g.drawText (label.text, r, juce::Justification::centredTop, false);
     }
 
-    // ---- No-sidechain guard --------------------------------------------
-    // Pre and Diff need the pre-effect (sidechain) input. Without it,
-    // tell the user rather than draw a meaningless flat trace.
-    const auto view = currentView();
-    const bool preConnected = processor.preBusActive.load (std::memory_order_relaxed);
-
-    if (! preConnected && (view == StereoAnalysis::View::Pre
-                           || view == StereoAnalysis::View::Diff))
-    {
-        g.setColour (juce::Colours::grey);
-        g.setFont (juce::FontOptions (sf (13.0f)));
-        const juce::String msg = (view == StereoAnalysis::View::Diff)
-            ? "Connect the sidechain (pre-effect) input to measure device-added stereo divergence"
-            : "Connect the sidechain (pre-effect) input to measure the input stereo image";
-        g.drawText (msg, plotArea.reduced (sx (16), 0),
-                    juce::Justification::centred, true);
-        return;
-    }
-
     // ---- Divergence trace ----------------------------------------------
-    const auto& div = processor.stereoAnalysis.getDivergence (view);
+    // The no-sidechain case is handled by the editor's shared
+    // SidechainNotice overlay, consistently across every mode.
+    const auto& div = processor.stereoAnalysis.getDivergence();
     const int   N   = (int) div.size();
     if (N <= 0) return;
 
