@@ -37,9 +37,21 @@ Pre-alpha. Working analysis modes:
   response by feeding actual discrete impulses. Threshold-triggered,
   multi-capture averaging, user-settable window length up to 120 seconds
   (long-tail reverbs). The first time-domain analysis in the suite.
-  Practical use of this mode is limited when WTSynth is the source (the
-  wavetable model can't deliver discrete impulses cleanly) - Farina IR
-  is the sister mode for that case, using a log sine sweep instead.
+- **Farina IR** - time-domain impulse response via log-sweep
+  deconvolution. Sister to Direct Impulse IR - same display, different
+  acquisition. User configures f0 / f1 / sweep / tail; clicks Capture;
+  the algorithm auto-triggers on the sweep onset, records, deconvolves
+  against the mathematically-generated inverse-sweep filter, and
+  displays the resulting IR. Buffer allocation and FFT setup are lazy
+  (first Capture click pays the cost, subsequent captures with the
+  same params are instant).
+
+Both IR modes are shipped but currently bottlenecked by WTSynth as a
+source: the wavetable cycling model produces an impulse train at
+playback pitch, and WTSynth's script-parameter UI has display bugs
+that make Farina parameters hard to set reliably. Full practical
+testing of these modes is gated on WTGenerator's render-mode-scripts
+arrival.
 
 Supporting infrastructure:
 
@@ -65,12 +77,13 @@ Supporting infrastructure:
 
 Not yet built:
 
-- Farina IR (queued up next as the first sidecar-driven analysis -
-  sister to Direct Impulse IR, produces the same time-domain impulse
-  response but acquires it from a log sine sweep, which WTSynth can
-  deliver cleanly).
 - Multisine flatness, step response, transfer function from noise.
 - Long-form sweep capture and 2D position plots.
+- Sidecar-driven parameter pre-fill for the analyses that take user-
+  configurable parameters (Farina, multisine, etc.).
+- WTGenerator companion plugin (see WTGENERATOR.md design doc) - 
+  purpose-built test-signal generator that resolves WTSynth's structural
+  limitations for IR / Farina / arbitrary-Hz two-tone testing.
 
 ## How to use it
 
