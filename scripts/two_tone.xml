@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<ParameterSet>
+<ParameterSet analysis="IMD">
   <Choice name="Mode" minVal="0" maxVal="2" defaultVal="1">
    <Item String="Fixed Pair"/>
    <Item String="Sweep Upper"/>

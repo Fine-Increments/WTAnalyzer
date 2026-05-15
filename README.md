@@ -33,6 +33,13 @@ Pre-alpha. Working analysis modes:
   (orders 2 through 4, 12 products total). Differential IMD percent plus
   a per-product bar chart with By Order and By Hz layout toggle.
   Pre / Post / Diff view toggle. Hold and Freeze.
+- **Direct Impulse IR** - time-domain capture of the device's impulse
+  response by feeding actual discrete impulses. Threshold-triggered,
+  multi-capture averaging, user-settable window length up to 120 seconds
+  (long-tail reverbs). The first time-domain analysis in the suite.
+  Practical use of this mode is limited when WTSynth is the source (the
+  wavetable model can't deliver discrete impulses cleanly) - Farina IR
+  is the sister mode for that case, using a log sine sweep instead.
 
 Supporting infrastructure:
 
@@ -43,6 +50,14 @@ Supporting infrastructure:
 - Pre / Post level meters with Peak / RMS toggle and a labelled dB scale.
 - Cursor hover readout (frequency + dB at the mouse position).
 - Per-analysis input-assumption captions below the panel.
+- Sidecar JSON reader: every test-signal script in `scripts/` now emits
+  a `wavetable.json` next to its `wavetable.wav` capturing the exact
+  parameter values used. WTAnalyzer's "Load Sidecar..." button picks
+  that JSON up and exposes its parameters to whichever analysis needs
+  them (the analyzer also polls the file's modification time so
+  re-running the script picks up automatically). Caption text
+  switches from generic mode advice to the actual loaded test-signal
+  parameters when a sidecar is present.
 - Color semantics are fixed: amber = pre / input, cyan = post / output,
   green = analysis result / "thing to fix."
 - Fully responsive UI - the window is user-resizable and every element
@@ -50,11 +65,12 @@ Supporting infrastructure:
 
 Not yet built:
 
-- Farina deconvolution, multisine flatness, impulse response, step
-  response, transfer function from noise.
+- Farina IR (queued up next as the first sidecar-driven analysis -
+  sister to Direct Impulse IR, produces the same time-domain impulse
+  response but acquires it from a log sine sweep, which WTSynth can
+  deliver cleanly).
+- Multisine flatness, step response, transfer function from noise.
 - Long-form sweep capture and 2D position plots.
-- Script picker / sidecar JSON reader (would auto-configure WTAnalyzer
-  from WTSynth's test-signal run).
 
 ## How to use it
 

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<ParameterSet>
+<ParameterSet analysis="GenericOverlay">
   <Choice name="Shape" minVal="0" maxVal="2" defaultVal="0">
    <Item String="Sawtooth"/>
    <Item String="Square"/>

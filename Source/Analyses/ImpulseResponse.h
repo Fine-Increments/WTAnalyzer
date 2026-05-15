@@ -45,9 +45,12 @@ public:
     static constexpr int kDefaultAverages = 4;
 
     // Pre signal must cross this linear level (absolute value) to trigger
-    // a capture. Equivalent to ~-20 dB FS. Most impulse-train scripts
-    // peak around -3 to -6 dB FS so this is conservative.
-    static constexpr float kTriggerThresholdLinear = 0.1f;
+    // a capture. Equivalent to ~-40 dB FS - kept loose so a wavetable
+    // synth's interpolation kernel (which smears a 1-sample-wide impulse
+    // into a wider, lower-amplitude bump) doesn't slip beneath the
+    // threshold. False triggers on tone are gated by the per-capture
+    // window holdoff, not the threshold itself.
+    static constexpr float kTriggerThresholdLinear = 0.01f;
 
     void prepare (double sampleRate, int samplesPerBlock);
     void reset();

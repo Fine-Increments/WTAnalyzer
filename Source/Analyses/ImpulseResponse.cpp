@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 void ImpulseResponse::prepare (double sr, int /*samplesPerBlock*/)
 {
@@ -32,9 +33,13 @@ void ImpulseResponse::prepare (double sr, int /*samplesPerBlock*/)
 
 void ImpulseResponse::reset()
 {
-    state                = State::Idle;
-    captureIdx           = 0;
-    sinceLastCompletion  = 0;
+    state               = State::Idle;
+    captureIdx          = 0;
+    // Initialise to a large value so the very first trigger after reset
+    // can fire immediately; the holdoff only meaningfully applies AFTER
+    // a completed capture (kept smaller than INT_MAX so the increment
+    // in processSample can't overflow).
+    sinceLastCompletion = std::numeric_limits<int>::max() / 2;
 
     completedCaptures  .store (0, std::memory_order_relaxed);
     displayLengthAtomic.store (0, std::memory_order_relaxed);
@@ -52,9 +57,9 @@ void ImpulseResponse::setWindowMs (int ms)
     // Changing the window invalidates the in-progress average - lengths
     // wouldn't match. Reset the running average without touching the
     // already-allocated buffers.
-    state                = State::Idle;
-    captureIdx           = 0;
-    sinceLastCompletion  = 0;
+    state               = State::Idle;
+    captureIdx          = 0;
+    sinceLastCompletion = std::numeric_limits<int>::max() / 2;
     completedCaptures  .store (0, std::memory_order_relaxed);
     displayLengthAtomic.store (0, std::memory_order_relaxed);
     std::fill (averaged.begin(), averaged.end(), 0.0f);

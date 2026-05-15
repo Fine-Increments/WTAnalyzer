@@ -37,6 +37,14 @@
             file="Source/ImpulseDisplay.cpp"/>
       <FILE id="IRsp02" name="ImpulseDisplay.h" compile="0" resource="0"
             file="Source/ImpulseDisplay.h"/>
+      <FILE id="Farn01" name="FarinaDisplay.cpp" compile="1" resource="0"
+            file="Source/FarinaDisplay.cpp"/>
+      <FILE id="Farn02" name="FarinaDisplay.h" compile="0" resource="0"
+            file="Source/FarinaDisplay.h"/>
+      <FILE id="Side01" name="SidecarReader.cpp" compile="1" resource="0"
+            file="Source/SidecarReader.cpp"/>
+      <FILE id="Side02" name="SidecarReader.h" compile="0" resource="0"
+            file="Source/SidecarReader.h"/>
       <FILE id="LMet01" name="LevelMetersPanel.cpp" compile="1" resource="0"
             file="Source/LevelMetersPanel.cpp"/>
       <FILE id="LMet02" name="LevelMetersPanel.h" compile="0" resource="0"
@@ -66,6 +74,10 @@
               file="Source/Analyses/ImpulseResponse.cpp"/>
         <FILE id="ImpR02" name="ImpulseResponse.h" compile="0" resource="0"
               file="Source/Analyses/ImpulseResponse.h"/>
+        <FILE id="FarI01" name="FarinaIR.cpp" compile="1" resource="0"
+              file="Source/Analyses/FarinaIR.cpp"/>
+        <FILE id="FarI02" name="FarinaIR.h" compile="0" resource="0"
+              file="Source/Analyses/FarinaIR.h"/>
       </GROUP>
     </GROUP>
   </MAINGROUP>

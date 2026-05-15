@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<ParameterSet>
+<ParameterSet analysis="MultisineFlatness">
   <Choice name="Phase" minVal="0" maxVal="3" defaultVal="0">
    <Item String="Schroeder"/>
    <Item String="Random"/>

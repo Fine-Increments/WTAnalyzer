@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<ParameterSet>
+<ParameterSet analysis="StepResponse">
   <Choice name="Mode" minVal="0" maxVal="2" defaultVal="2">
    <Item String="Naive"/>
    <Item String="Symmetric Step"/>

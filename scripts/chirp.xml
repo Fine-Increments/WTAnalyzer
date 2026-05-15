@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<ParameterSet>
+<ParameterSet analysis="FarinaDeconvolution">
   <Choice name="Type" minVal="0" maxVal="1" defaultVal="1">
    <Item String="Linear"/>
    <Item String="Log (Farina)"/>

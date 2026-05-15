@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<ParameterSet analysis="FrequencyResponse">
+  <Int name="#Frames" minVal="2" maxVal="256" defaultVal="32"/>
+</ParameterSet>

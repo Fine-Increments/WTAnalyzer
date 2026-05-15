@@ -18,6 +18,7 @@
 #include "THDDisplay.h"
 #include "IMDDisplay.h"
 #include "ImpulseDisplay.h"
+#include "FarinaDisplay.h"
 #include "LevelMetersPanel.h"
 #include "LatencyPanel.h"
 
@@ -95,6 +96,9 @@ private:
     // Impulse Response display path. First time-domain panel.
     ImpulseDisplay   impulseDisplay;
 
+    // Farina IR display path - sister panel, same time-domain IR plot.
+    FarinaDisplay    farinaDisplay;
+
     LevelMetersPanel levelMetersPanel;
     LatencyPanel     latencyPanel;
 
@@ -103,14 +107,20 @@ private:
     juce::ComboBox analysisSelector;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> analysisAttachment;
 
-    // Brief one-line caption describing what input the active analysis
-    // expects (including useful non-standard inputs). The string is set by
-    // applyAnalysisMode and rendered in paint() inside captionBounds, which
-    // resized() positions on the right half of the cursor-readout strip.
-    // Every analysis mode must populate this - see the carve-out in
-    // feedback-ui-no-instructions memory.
-    juce::String          captionText;
-    juce::Rectangle<int>  captionBounds;
+    // Sidecar JSON loader. Lives in the header alongside the analysis
+    // selector. Currently transient (path not persisted across sessions);
+    // future iteration can add persistence via the plugin state tree.
+    juce::TextButton sidecarButton;
+    void chooseSidecarFile();
+    void updateSidecarButtonText();
+
+    // Help button - opens a detailed mode-specific instructions popup
+    // for whichever analysis is currently selected. Replaces the prior
+    // inline-caption approach; see feedback-ui-no-instructions memory.
+    juce::TextButton helpButton;
+    void openHelpDialog();
+    static juce::String getModeHelpText (int modeIndex);
+    static juce::String getModeName (int modeIndex);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (WTAnalyzerAudioProcessorEditor)
 };

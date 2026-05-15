@@ -30,6 +30,7 @@ import os
 import sys
 import numpy as np
 import soundfile as sf
+import wt_common
 
 SAMPLES_PER_FRAME = 2048
 SAMPLE_RATE_HZ = 48000
@@ -79,3 +80,9 @@ for i in range(num_frames):
 
 data = np.concatenate(frames).astype(np.float32)
 sf.write(full_path, data, SAMPLE_RATE_HZ, subtype='FLOAT')
+
+wt_common.write_sidecar(
+    output_path, "step.py", "StepResponse",
+    {"Mode": mode, "Position": position, "MaxHarmonic": max_h, "#Frames": num_frames},
+    sample_rate=SAMPLE_RATE_HZ, samples_per_frame=SAMPLES_PER_FRAME,
+    frame_count=num_frames)

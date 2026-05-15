@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<ParameterSet>
+<ParameterSet analysis="TransferFunctionFromNoise">
   <Choice name="Color" minVal="0" maxVal="4" defaultVal="1">
    <Item String="White"/>
    <Item String="Pink"/>

@@ -9,11 +9,13 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include "SidecarReader.h"
 #include "Analyses/FrequencyResponse.h"
 #include "Analyses/THDMeasurement.h"
 #include "Analyses/AliasingDetection.h"
 #include "Analyses/IMDMeasurement.h"
 #include "Analyses/ImpulseResponse.h"
+#include "Analyses/FarinaIR.h"
 
 //==============================================================================
 /**
@@ -127,7 +129,8 @@ public:
         THDMeasurement    = 2,
         AliasingDetection = 3,
         IMDMeasurement    = 4,
-        ImpulseResponse   = 5
+        DirectImpulseIR   = 5,
+        FarinaIR          = 6
     };
 
     // First analysis: derived from the existing pre/post spectrum FFT.
@@ -149,10 +152,23 @@ public:
     // spectrum FFT output and produces per-product readouts.
     IMDMeasurement imdMeasurement;
 
-    // Fifth analysis: time-domain impulse response. Operates directly on
-    // raw pre/post audio (not the spectrum FFT) - the first time-domain
-    // analysis in the suite. Trigger-detected, accumulating average.
+    // Fifth analysis: time-domain impulse response via direct impulse
+    // capture. Operates on raw pre/post audio (not the spectrum FFT) -
+    // the first time-domain analysis in the suite. Trigger-detected,
+    // accumulating average.
     ImpulseResponse impulseResponse;
+
+    // Sixth analysis: time-domain impulse response via Farina log-sweep
+    // deconvolution. Same output (IR plot) as DirectImpulseIR but
+    // acquired from a log sine sweep, which WTSynth can deliver
+    // cleanly where discrete impulses can't.
+    FarinaIR farinaIR;
+
+    // Sidecar JSON reader: parameter-source for analyses that need to
+    // know exactly what test signal the script generated (PLANNING.md
+    // section 2.5). Lives on the message thread; analyses snapshot the
+    // context at controlled moments rather than polling it per sample.
+    SidecarReader sidecar;
 
 private:
     //==============================================================================

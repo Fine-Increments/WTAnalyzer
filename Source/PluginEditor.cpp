@@ -10,6 +10,42 @@
 #include "PluginEditor.h"
 
 //==============================================================================
+// Modal popup that shows the detailed instructions for whichever analysis
+// mode was active when Help was clicked. Body is a scrollable, read-only
+// TextEditor so long mode descriptions don't truncate.
+namespace
+{
+    class HelpContentComponent  : public juce::Component
+    {
+    public:
+        HelpContentComponent (const juce::String& body)
+        {
+            editor.setMultiLine (true, true);
+            editor.setReadOnly (true);
+            editor.setScrollbarsShown (true);
+            editor.setCaretVisible (false);
+            editor.setJustification (juce::Justification::topLeft);
+            editor.setFont (juce::FontOptions (13.0f));
+            editor.setColour (juce::TextEditor::backgroundColourId, juce::Colour (0xff181a1d));
+            editor.setColour (juce::TextEditor::textColourId,       juce::Colour (0xffd8d8d8));
+            editor.setColour (juce::TextEditor::outlineColourId,    juce::Colour (0xff2a2d32));
+            editor.setText (body, juce::dontSendNotification);
+            editor.moveCaretToTop (false);
+            addAndMakeVisible (editor);
+            setSize (560, 440);
+        }
+
+        void resized() override
+        {
+            editor.setBounds (getLocalBounds().reduced (12));
+        }
+
+    private:
+        juce::TextEditor editor;
+    };
+}
+
+//==============================================================================
 WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioProcessor& p)
     : AudioProcessorEditor (&p),
       audioProcessor       (p),
@@ -18,6 +54,7 @@ WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioP
       thdDisplay           (p),
       imdDisplay           (p),
       impulseDisplay       (p),
+      farinaDisplay        (p),
       levelMetersPanel     (p),
       latencyPanel         (p)
 {
@@ -28,6 +65,7 @@ WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioP
     addChildComponent (thdDisplay);     // hidden by default; applyAnalysisMode shows it
     addChildComponent (imdDisplay);
     addChildComponent (impulseDisplay);
+    addChildComponent (farinaDisplay);
     addAndMakeVisible (levelMetersPanel);
     addAndMakeVisible (latencyPanel);
 
@@ -43,6 +81,20 @@ WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioP
     analysisAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
         audioProcessor.apvts, "activeAnalysis", analysisSelector);
 
+    addAndMakeVisible (sidecarButton);
+    sidecarButton.onClick = [this] { chooseSidecarFile(); };
+    updateSidecarButtonText();
+
+    audioProcessor.sidecar.onContextChanged = [this]
+    {
+        updateSidecarButtonText();
+        repaint();
+    };
+
+    addAndMakeVisible (helpButton);
+    helpButton.setButtonText ("?");
+    helpButton.onClick = [this] { openHelpDialog(); };
+
     setResizable (true, true);
     setResizeLimits (kMinWidth, kMinHeight, kMaxWidth, kMaxHeight);
     setSize (kBaseWidth, kBaseHeight);
@@ -57,8 +109,351 @@ WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioP
 WTAnalyzerAudioProcessorEditor::~WTAnalyzerAudioProcessorEditor()
 {
     stopTimer();
+    audioProcessor.sidecar.onContextChanged = nullptr;
     setLookAndFeel (nullptr);  // detach before LookAndFeel member destructs
 }
+
+void WTAnalyzerAudioProcessorEditor::chooseSidecarFile()
+{
+    auto chooser = std::make_shared<juce::FileChooser> (
+        "Select wavetable.json sidecar",
+        juce::File::getSpecialLocation (juce::File::userHomeDirectory),
+        "*.json");
+
+    chooser->launchAsync (
+        juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+        [this, chooser] (const juce::FileChooser& fc)
+        {
+            const auto file = fc.getResult();
+            if (file.existsAsFile())
+                audioProcessor.sidecar.setPath (file);
+        });
+}
+
+void WTAnalyzerAudioProcessorEditor::updateSidecarButtonText()
+{
+    const auto& ctx = audioProcessor.sidecar.getContext();
+    sidecarButton.setButtonText (ctx.valid
+        ? juce::String ("Sidecar: ") + ctx.sourceFile.getFileNameWithoutExtension()
+        : juce::String ("Load Sidecar..."));
+}
+
+void WTAnalyzerAudioProcessorEditor::openHelpDialog()
+{
+    const int modeIndex = lastAppliedAnalysisMode;
+    auto* content = new HelpContentComponent (getModeHelpText (modeIndex));
+
+    juce::DialogWindow::LaunchOptions options;
+    options.content.setOwned (content);
+    options.dialogTitle              = "WTAnalyzer - " + getModeName (modeIndex);
+    options.dialogBackgroundColour   = juce::Colour (0xff202225);
+    options.escapeKeyTriggersCloseButton = true;
+    options.useNativeTitleBar        = true;
+    options.resizable                = true;
+    options.launchAsync();
+}
+
+juce::String WTAnalyzerAudioProcessorEditor::getModeName (int modeIndex)
+{
+    using Mode = WTAnalyzerAudioProcessor::AnalysisMode;
+    switch ((Mode) modeIndex)
+    {
+        case Mode::GenericOverlay:    return "Generic Overlay";
+        case Mode::FrequencyResponse: return "Frequency Response";
+        case Mode::THDMeasurement:    return "THD Measurement";
+        case Mode::AliasingDetection: return "Aliasing Detection";
+        case Mode::IMDMeasurement:    return "IMD Measurement";
+        case Mode::DirectImpulseIR:   return "Direct Impulse IR";
+        case Mode::FarinaIR:          return "Farina IR";
+    }
+    return "Analysis";
+}
+
+juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
+{
+    using Mode = WTAnalyzerAudioProcessor::AnalysisMode;
+    switch ((Mode) modeIndex)
+    {
+        case Mode::GenericOverlay:
+            return
+                "Generic Overlay\n"
+                "================\n\n"
+                "What it shows\n"
+                "  Live FFT spectra of the pre-effect (amber) and post-effect (cyan)\n"
+                "  signals overlaid on a log-frequency / dB plot. No derived measurement -\n"
+                "  this is the universal A/B view you'll fall back to whenever you want to\n"
+                "  see what's actually flowing through the chain.\n\n"
+                "Input\n"
+                "  Anything. There's no expected test signal. Music, noise, a tone, a\n"
+                "  sweep - all valid.\n\n"
+                "How to read it\n"
+                "  Amber = pre = your input signal.\n"
+                "  Cyan  = post = output after the effect under test.\n"
+                "  Where the two overlap, the device is transparent. Where they differ,\n"
+                "  the device is changing the spectrum.\n\n"
+                "Mouse controls\n"
+                "  Drag in the dB-axis gutter (left side): zooms dB axis only.\n"
+                "  Drag in the freq-axis gutter (bottom): zooms frequency axis only.\n"
+                "  Drag in the plot area: zooms both axes around the click point.\n"
+                "  Double-click in a gutter: resets just that axis.\n"
+                "  Double-click in the plot: resets both axes.\n"
+                "  Move the mouse over the plot: the cursor readout (bottom-left) shows\n"
+                "  the frequency and dB level under the pointer.\n";
+
+        case Mode::FrequencyResponse:
+            return
+                "Frequency Response\n"
+                "==================\n\n"
+                "What it measures\n"
+                "  The per-bin transfer function of the device under test: post_dB minus\n"
+                "  pre_dB at every FFT bin. Equivalent to post / pre in the linear\n"
+                "  domain - i.e. the device's gain at each frequency.\n\n"
+                "Input\n"
+                "  Best with a broadband signal that excites the entire audible spectrum:\n"
+                "    - Linear or log sine sweep, 20 Hz - 20 kHz, 10+ seconds.\n"
+                "    - Pink noise (equal energy per octave - good for EQ-style devices).\n"
+                "    - White noise (equal energy per Hz - good for full-spectrum coverage).\n"
+                "  Wavetable sweeps also work and surface signal-character response when\n"
+                "  characterising how an effect reacts to different spectral shapes.\n\n"
+                "How to read it\n"
+                "  Green trace = the device's gain at each frequency, drawn on top of the\n"
+                "  pre/post spectra. Flat at 0 dB means transparent. Peaks or dips reveal\n"
+                "  the filter character. Slope shows tilt or shelving.\n\n"
+                "  Bins where the pre signal is too quiet to measure cleanly are flagged\n"
+                "  as 'no measurement' and break the trace path. This prevents misleading\n"
+                "  spikes where pre is essentially silent and any post energy would\n"
+                "  divide to infinity.\n\n"
+                "Tips\n"
+                "  - Time-align pre and post before measuring. Use the Latency panel to\n"
+                "    measure the device's latency and apply that delay to pre.\n"
+                "  - A 10+ second sweep gives the smoothest result with the most coverage.\n"
+                "    Very short sweeps leave the upper end under-resolved.\n";
+
+        case Mode::THDMeasurement:
+            return
+                "THD Measurement\n"
+                "===============\n\n"
+                "What it measures\n"
+                "  Total Harmonic Distortion: how much harmonic energy the device adds\n"
+                "  beyond what's in the input. Reported as a single percentage at the\n"
+                "  top and as a per-harmonic bar chart underneath (h1 = fundamental,\n"
+                "  h2 = second harmonic, etc., up to h16).\n\n"
+                "  The differential model (post^2 - pre^2 per harmonic, then RMS over\n"
+                "  h2..hN divided by pre's fundamental amplitude) means the readout is\n"
+                "  strictly what the device added - the synth's own residue is subtracted\n"
+                "  out. THD% is always the differential value regardless of which view\n"
+                "  you select.\n\n"
+                "Input\n"
+                "  A steady sine tone. Any audible-range frequency works; 1 kHz is the\n"
+                "  textbook reference. WTSynth + the harmonics.py script playing a single\n"
+                "  harmonic is the easiest way.\n\n"
+                "  Differential mode also accepts non-sine inputs (saws, squares, custom\n"
+                "  wavetables) - the math correctly isolates added energy regardless of\n"
+                "  what's in pre. The bars then show how the device shapes each existing\n"
+                "  harmonic.\n\n"
+                "Views (Diff / Pre / Post)\n"
+                "  Diff: Added energy per harmonic relative to pre's fundamental. The\n"
+                "        canonical THD view - shows only what the device introduced.\n"
+                "  Pre:  Pre's own harmonics relative to its own fundamental. Sanity-check\n"
+                "        the test signal - a clean sine should have everything at the\n"
+                "        floor except h1 at 0 dB.\n"
+                "  Post: Post's harmonics relative to its own fundamental. Classical THD\n"
+                "        view - what the device produces overall.\n\n"
+                "Hold / Freeze\n"
+                "  Hold: per-bar peak-hold across frames. Useful for catching transient\n"
+                "        distortion that flashes briefly. Toggling off resumes live; the\n"
+                "        held values stay until you toggle back on, which re-arms peak\n"
+                "        accumulation from the next live value.\n"
+                "  Freeze: pauses the display so you can study the bars without them\n"
+                "        moving. Audio thread keeps running underneath.\n\n"
+                "Tips\n"
+                "  - Minimum fundamental level is -30 dB FS. Below that the whole panel\n"
+                "    shows 'play a single sine tone' rather than reporting garbage.\n"
+                "  - For very tonal sources, h1 stays at 0 dB (the reference) and only\n"
+                "    h2+ tells you anything diagnostic.\n";
+
+        case Mode::AliasingDetection:
+            return
+                "Aliasing Detection\n"
+                "==================\n\n"
+                "What it measures\n"
+                "  Off-grid spectral energy the device under test introduces - i.e.,\n"
+                "  energy at frequencies that aren't integer multiples of the test tone\n"
+                "  and weren't already present in pre. This isolates aliasing artefacts\n"
+                "  produced by nonlinear stages that aren't oversampled enough for the\n"
+                "  input they're seeing.\n\n"
+                "Input\n"
+                "  A high-frequency sine sweep, typically 4 - 20 kHz. The higher the test\n"
+                "  fundamental, the closer its harmonics get to Nyquist, the more\n"
+                "  aliasing the device will produce if it's prone.\n\n"
+                "  Saw or square sweeps fold MORE harmonics into the alias zone at any\n"
+                "  given fundamental - they're an aggressive stress test.\n\n"
+                "Views (Composite / Pre / Post)\n"
+                "  Composite (default): pre spectrum in amber + green differential trace\n"
+                "                       showing only the device-added off-grid energy.\n"
+                "                       For a transparent device the green is empty and\n"
+                "                       composite looks identical to Pre view.\n"
+                "  Pre:  the raw pre spectrum alone (amber) - sanity-check the test\n"
+                "        signal before judging the device.\n"
+                "  Post: the raw post spectrum alone (cyan) - what's coming out of the\n"
+                "        device, with no decomposition.\n\n"
+                "Hold / Clear\n"
+                "  Hold: peak-keep the green differential trace across frames. A sweep\n"
+                "        sweeps the alias content across the spectrum over time, so peak\n"
+                "        hold accumulates the full picture across one pass.\n"
+                "  Clear: wipe the held peak. Useful between test runs - lets you sweep\n"
+                "        again from a clean slate.\n\n"
+                "Tips\n"
+                "  - Compare two effects head-to-head: load a clean reference effect, run\n"
+                "    a sweep, observe the differential. Swap to the device under test,\n"
+                "    Clear, repeat. The relative green levels show which device aliases\n"
+                "    more.\n"
+                "  - WTSynth's own interpolation produces residual aliasing visible in\n"
+                "    Pre view. The differential subtracts this so the green is strictly\n"
+                "    the device's contribution.\n";
+
+        case Mode::IMDMeasurement:
+            return
+                "IMD Measurement\n"
+                "===============\n\n"
+                "What it measures\n"
+                "  Intermodulation Distortion: the products created when two simultaneous\n"
+                "  tones pass through a nonlinear stage. Companion to THD - real audio\n"
+                "  is multi-tonal, and IMD captures the perceptually offensive distortion\n"
+                "  that THD misses.\n\n"
+                "  Reports a differential IMD% at top and a per-product bar chart below.\n"
+                "  Twelve products covering orders 2 through 4: f1+f2, f1-f2, 2f1+f2,\n"
+                "  2f1-f2, f1+2f2, f1-2f2, 3f1+f2, 3f1-f2, 2f1+2f2, 2f1-2f2, f1+3f2,\n"
+                "  f1-3f2. Convention: f1 is the lower frequency, f2 the higher.\n\n"
+                "Input\n"
+                "  Two pure sines played simultaneously. Canonical pairs:\n"
+                "    - SMPTE: 60 Hz + 7 kHz, amplitude ratio 4:1 (bass-heavy nonlinearity).\n"
+                "    - CCIF:  19 + 20 kHz, equal amplitude (upper-band products).\n"
+                "    - DIN:   250 Hz + 8 kHz, equal amplitude.\n"
+                "  Any two distinct tones at least 100 Hz apart work. The two_tone.py\n"
+                "  script in the scripts folder generates these as WTSynth wavetables.\n\n"
+                "Views (Diff / Pre / Post)\n"
+                "  Diff: added-energy per product. The canonical IMD view.\n"
+                "  Pre:  pre's energy at each product position. For a clean test signal\n"
+                "        the bars are at the noise floor.\n"
+                "  Post: post's energy at each product position. Shows what the device\n"
+                "        produces overall.\n\n"
+                "Layout (By Order / By Hz)\n"
+                "  By Order: bars at fixed equal-width slots, ordered by |m|+|n|. Easy\n"
+                "            to scan: order-2 on the left, order-3 in the middle,\n"
+                "            order-4 on the right. Engineer's mental model.\n"
+                "  By Hz:    bars positioned at their actual product frequency on a log\n"
+                "            axis. Shows where in the audible band the products land -\n"
+                "            crucial for SMPTE-style tests where products cluster near f2.\n\n"
+                "Hold / Freeze\n"
+                "  Same semantics as THD - per-bar peak-hold + display freeze.\n\n"
+                "Tips\n"
+                "  - WTSynth's mipmap engine attenuates high wavetable harmonics at high\n"
+                "    playback pitches. Keep harmonic numbers low and increase playback\n"
+                "    pitch to reach high Hz pairs.\n"
+                "  - Symmetric clippers (Saturator Analog Clip / Soft Sine) produce\n"
+                "    primarily odd-order products. Asymmetric stages (tube biases) show\n"
+                "    strong even-order. Cross-check by toggling between modes.\n";
+
+        case Mode::DirectImpulseIR:
+            return
+                "Direct Impulse IR\n"
+                "=================\n\n"
+                "What it measures\n"
+                "  The impulse response of the device under test - its complete linear\n"
+                "  characterisation in the time domain. This mode obtains the IR via\n"
+                "  direct impulse capture: a single-sample impulse is fed in, the post\n"
+                "  output IS the impulse response, captures across multiple impulses are\n"
+                "  averaged for SNR.\n\n"
+                "Input\n"
+                "  A periodic impulse train. The impulse.py script generates this as a\n"
+                "  WTSynth wavetable - each cycle contains a single 0.95 amplitude sample\n"
+                "  surrounded by silence.\n\n"
+                "Critical constraint\n"
+                "  WTSynth plays the wavetable ONCE PER PLAYBACK CYCLE, so the impulse\n"
+                "  rate equals the played MIDI note frequency. At MIDI A2 (110 Hz) you\n"
+                "  get 110 impulses per second - period 9 ms. If your IR window is\n"
+                "  longer than that period, successive impulse responses overlap and\n"
+                "  the average becomes garbage.\n\n"
+                "  Rule of thumb: impulse period > IR window. For a 250 ms window,\n"
+                "  playback fundamental should be no more than ~4 Hz. For longer reverb\n"
+                "  tails this gets impractical with WTSynth - use Farina IR instead.\n\n"
+                "Controls\n"
+                "  Window: capture length in milliseconds, 50 ms to 120 s. Set to cover\n"
+                "          the device's tail length.\n"
+                "  Averages: number of impulses to average. Higher = lower noise floor\n"
+                "            in the captured IR but longer total test duration.\n"
+                "  Clear: wipe the running average. Press between tests.\n\n"
+                "How to read it\n"
+                "  Linear time on X (ms or s for longer windows), linear amplitude on Y\n"
+                "  centred at zero. The peak at t=0 is the device's instantaneous\n"
+                "  response; everything after is the tail / ringing / reverb.\n\n"
+                "Tips\n"
+                "  - For short-tail effects (EQs, simple distortions), a 20-30 ms window\n"
+                "    works at most playback pitches.\n"
+                "  - For long-tail reverbs, set the window high and the playback pitch\n"
+                "    very low (or switch to Farina IR which doesn't have this problem).\n";
+
+        case Mode::FarinaIR:
+            return
+                "Farina IR\n"
+                "=========\n\n"
+                "What it measures\n"
+                "  Same output as Direct Impulse IR - a time-domain impulse response of\n"
+                "  the device - but acquired via Farina log-sweep deconvolution rather\n"
+                "  than direct impulse capture. The device is fed a known log sine\n"
+                "  sweep; the captured post output is deconvolved against the\n"
+                "  mathematically-generated inverse-sweep filter; the result is the IR.\n\n"
+                "Why use this instead of Direct Impulse IR\n"
+                "  - A sweep delivers far more total test energy than a single impulse,\n"
+                "    so SNR is enormous without needing to average.\n"
+                "  - The sweep distributes excitation across the entire spectrum, so the\n"
+                "    device is properly tested at every frequency.\n"
+                "  - The wavetable model can't deliver clean discrete impulses, but it\n"
+                "    can deliver clean log sweeps. For WTSynth-driven testing this is\n"
+                "    the practical IR measurement path.\n\n"
+                "Input\n"
+                "  A log sine sweep from f0 to f1 over the configured duration. The\n"
+                "  chirp.py script in the scripts folder produces these as WTSynth\n"
+                "  wavetables - set Type=Log (Farina), Start and End to match your\n"
+                "  intended f0 / f1.\n\n"
+                "  CRITICAL: the parameters configured in the Farina panel must match\n"
+                "  the parameters of the actual sweep you play. The deconvolution math\n"
+                "  uses these values to construct the inverse filter; mismatched\n"
+                "  parameters give a garbage IR.\n\n"
+                "Controls\n"
+                "  f0:    sweep start frequency in Hz.\n"
+                "  f1:    sweep end frequency in Hz.\n"
+                "  Sweep: sweep duration in seconds.\n"
+                "  Tail:  additional capture time after the sweep ends; equals the\n"
+                "         length of the resulting IR. Set to cover the device's\n"
+                "         decay tail.\n"
+                "  Capture: arms the trigger. The audio thread watches pre for the\n"
+                "           sweep onset, then records for sweep + tail seconds. When\n"
+                "           the recording completes, the message thread deconvolves\n"
+                "           the post against the inverse sweep and the IR appears in\n"
+                "           the plot.\n"
+                "  Clear: wipes the captured IR. Click before re-arming a new capture.\n\n"
+                "Status\n"
+                "  Idle:    no capture in progress; click Capture to arm.\n"
+                "  Waiting: pre threshold not yet crossed.\n"
+                "  Capturing X / Y: recording, showing progress in samples.\n"
+                "  Processing: FFT deconvolution running.\n"
+                "  IR ready: result is in the plot.\n\n"
+                "Tips\n"
+                "  - The first Capture click after entering Farina mode (or changing\n"
+                "    sweep/tail params beyond previous capacity) allocates buffers and\n"
+                "    builds the FFT. This takes a fraction of a second; subsequent\n"
+                "    captures with the same params are instant.\n"
+                "  - Standard log sweeps used in measurement are 10-30 seconds covering\n"
+                "    20 Hz to 20 kHz. For very long reverbs increase Tail.\n"
+                "  - The IR plot's Y axis auto-scales to peak; for short-tailed effects\n"
+                "    the peak at t=0 dominates and the tail looks small; zoom or use\n"
+                "    Clear + adjust parameters if you want to see the tail in detail.\n";
+    }
+    return "No help available for this mode.";
+}
+
 
 void WTAnalyzerAudioProcessorEditor::timerCallback()
 {
@@ -77,48 +472,20 @@ void WTAnalyzerAudioProcessorEditor::applyAnalysisMode (int modeIndex)
                                   || modeIndex == (int) Mode::AliasingDetection);
     const bool wantsThdPath      = (modeIndex == (int) Mode::THDMeasurement);
     const bool wantsImdPath      = (modeIndex == (int) Mode::IMDMeasurement);
-    const bool wantsIrPath       = (modeIndex == (int) Mode::ImpulseResponse);
+    const bool wantsIrPath       = (modeIndex == (int) Mode::DirectImpulseIR);
+    const bool wantsFarinaPath   = (modeIndex == (int) Mode::FarinaIR);
 
     spectrumDisplay.setVisible (wantsSpectrumPath);
     cursorReadout  .setVisible (wantsSpectrumPath);
     thdDisplay     .setVisible (wantsThdPath);
     imdDisplay     .setVisible (wantsImdPath);
     impulseDisplay .setVisible (wantsIrPath);
+    farinaDisplay  .setVisible (wantsFarinaPath);
 
     // The alias-view toggle row lives inside SpectrumDisplay (it's tied to
     // a specific mode within the shared spectrum panel) but its visibility
     // is mode-driven from the editor.
     spectrumDisplay.setAliasingViewButtonsVisible (modeIndex == (int) Mode::AliasingDetection);
-
-    // Per-mode input caption. Mention any non-standard inputs that yield
-    // useful diagnostic value, not just the textbook test signal. Empty
-    // string for modes that genuinely have no input assumption.
-    switch ((Mode) modeIndex)
-    {
-        case Mode::GenericOverlay:
-            captionText = {};
-            break;
-        case Mode::FrequencyResponse:
-            captionText = "Sweep tone or broadband noise. "
-                          "Wavetable sweeps also surface signal-character response.";
-            break;
-        case Mode::THDMeasurement:
-            captionText = "Steady sine. "
-                          "Differential view also works for saw, square, or wavetable input.";
-            break;
-        case Mode::AliasingDetection:
-            captionText = "High-frequency sine sweep (4-20 kHz). "
-                          "Saw or square sweeps fold more harmonics into the alias zone.";
-            break;
-        case Mode::IMDMeasurement:
-            captionText = "Two pure sines. SMPTE (60 Hz + 7 kHz) or CCIF (19 + 20 kHz) "
-                          "are the canonical tests; any two distinct tones work.";
-            break;
-        case Mode::ImpulseResponse:
-            captionText = "Periodic impulse train. Use scripts/impulse.py; "
-                          "set impulse period longer than the device's tail.";
-            break;
-    }
 
     repaint();
 }
@@ -128,24 +495,17 @@ void WTAnalyzerAudioProcessorEditor::paint (juce::Graphics& g)
 {
     g.fillAll (juce::Colour (0xff202225));
 
-    // Title: drawn in the header row, with space reserved on the right for
-    // the analysis selector ComboBox (positioned by resized()).
+    // Title: drawn in the header row, with space reserved on the right
+    // for the sidecar button, analysis selector, and help button (all
+    // positioned by resized()).
     auto bounds = getLocalBounds().reduced (sx (16));
     auto headerRow = bounds.removeFromTop (sx (24));
 
-    const int selectorWidth = sx (200);
-    headerRow.removeFromRight (selectorWidth + sx (8));
+    headerRow.removeFromRight (sx (180) + sx (8) + sx (200) + sx (8) + sx (30) + sx (8));
 
     g.setColour (juce::Colours::whitesmoke);
     g.setFont (juce::FontOptions (sf (16.0f)));
     g.drawText ("WTAnalyzer", headerRow, juce::Justification::centredLeft);
-
-    if (captionText.isNotEmpty() && ! captionBounds.isEmpty())
-    {
-        g.setColour (juce::Colours::grey);
-        g.setFont (juce::FontOptions (sf (11.0f)));
-        g.drawText (captionText, captionBounds, juce::Justification::centred, false);
-    }
 }
 
 void WTAnalyzerAudioProcessorEditor::resized()
@@ -157,14 +517,22 @@ void WTAnalyzerAudioProcessorEditor::resized()
     thdDisplay      .setUiScale (s);
     imdDisplay      .setUiScale (s);
     impulseDisplay  .setUiScale (s);
+    farinaDisplay   .setUiScale (s);
     levelMetersPanel.setUiScale (s);
     latencyPanel    .setUiScale (s);
 
     auto bounds = getLocalBounds().reduced (sx (16));
 
-    // Header row: title (drawn by paint()) on the left, analysis selector on the right.
+    // Header row: title (drawn by paint()) on the left, then right-to-left:
+    // help button, analysis selector, sidecar button. Help is the rightmost
+    // anchor so the eye lands on it when seeking instructions; selector and
+    // sidecar shift left to accommodate.
     auto headerRow = bounds.removeFromTop (sx (24));
+    helpButton.setBounds (headerRow.removeFromRight (sx (30)));
+    headerRow.removeFromRight (sx (8));
     analysisSelector.setBounds (headerRow.removeFromRight (sx (200)));
+    headerRow.removeFromRight (sx (8));
+    sidecarButton.setBounds (headerRow.removeFromRight (sx (180)));
 
     bounds.removeFromTop (sx (8));
 
@@ -175,21 +543,17 @@ void WTAnalyzerAudioProcessorEditor::resized()
     const int metersHeight = sx (40) + sx (20) + sx (40);  // post + scale strip + pre
     levelMetersPanel.setBounds (bounds.removeFromBottom (metersHeight));
 
-    // Readout strip between spectrum and meters. The cursor readout occupies
-    // the left 220 sx (only visible when hovering the spectrum), and the
-    // caption is drawn across the full strip width with centred justification
-    // so it sits visually below the analysis panel rather than tucked into
-    // the right edge. Overlap with the cursor readout is rare (only on
-    // hover) and the cursor's short text doesn't obscure the middle of the
-    // caption.
+    // Readout strip between spectrum and meters: cursor readout on the
+    // left, nothing else (the inline caption that used to share this
+    // strip was replaced by the Help popup in the header).
     auto readoutStrip = bounds.removeFromBottom (sx (18));
-    captionBounds = readoutStrip;
     cursorReadout.setBounds (readoutStrip.removeFromLeft (sx (220)));
     bounds.removeFromBottom (sx (4));
 
-    // Spectrum, THD, IMD and IR share the same rect; visibility decides which is drawn.
+    // Spectrum, THD, IMD, IR and Farina share the same rect; visibility decides which is drawn.
     spectrumDisplay.setBounds (bounds);
     thdDisplay     .setBounds (bounds);
     imdDisplay     .setBounds (bounds);
     impulseDisplay .setBounds (bounds);
+    farinaDisplay  .setBounds (bounds);
 }

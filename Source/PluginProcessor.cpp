@@ -40,7 +40,8 @@ WTAnalyzerAudioProcessor::createParameterLayout()
         juce::ParameterID { "activeAnalysis", 1 },
         "Active Analysis",
         juce::StringArray { "Generic Overlay", "Frequency Response", "THD Measurement",
-                            "Aliasing Detection", "IMD Measurement", "Impulse Response" },
+                            "Aliasing Detection", "IMD Measurement", "Direct Impulse IR",
+                            "Farina IR" },
         0));
 
     // Level meter mode: false = Peak (default, matches DAW meter behaviour),
@@ -106,6 +107,34 @@ WTAnalyzerAudioProcessor::createParameterLayout()
         ImpulseResponse::kMinAverages,
         ImpulseResponse::kMaxAverages,
         ImpulseResponse::kDefaultAverages));
+
+    // Farina IR sweep parameters. f0/f1 are the start/end frequencies of
+    // the log sweep the user is driving through the device; duration is
+    // how long the sweep lasts; tail is how much additional post audio
+    // to capture after sweep end (= length of the resulting IR).
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "farinaF0Hz", 1 },
+        "Farina f0 (Hz)",
+        juce::NormalisableRange<float> (FarinaIR::kMinF0Hz, FarinaIR::kMaxF0Hz, 0.0f, 0.3f),
+        FarinaIR::kDefaultF0Hz));
+
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "farinaF1Hz", 1 },
+        "Farina f1 (Hz)",
+        juce::NormalisableRange<float> (FarinaIR::kMinF1Hz, FarinaIR::kMaxF1Hz, 0.0f, 0.3f),
+        FarinaIR::kDefaultF1Hz));
+
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "farinaSweepSec", 1 },
+        "Farina Sweep (s)",
+        juce::NormalisableRange<float> (FarinaIR::kMinSweepSec, FarinaIR::kMaxSweepSec, 0.0f, 0.5f),
+        FarinaIR::kDefaultSweepSec));
+
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "farinaTailSec", 1 },
+        "Farina Tail (s)",
+        juce::NormalisableRange<float> (FarinaIR::kMinTailSec, FarinaIR::kMaxTailSec, 0.0f, 0.5f),
+        FarinaIR::kDefaultTailSec));
 
     return layout;
 }
@@ -210,6 +239,12 @@ void WTAnalyzerAudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
     impulseResponse  .setWindowMs    ((int) *apvts.getRawParameterValue ("irWindowMs"));
     impulseResponse  .setAverageGoal ((int) *apvts.getRawParameterValue ("irAverageCount"));
 
+    farinaIR.prepare (sampleRate, samplesPerBlock);
+    farinaIR.setSweepParams (*apvts.getRawParameterValue ("farinaF0Hz"),
+                             *apvts.getRawParameterValue ("farinaF1Hz"),
+                             *apvts.getRawParameterValue ("farinaSweepSec"),
+                             *apvts.getRawParameterValue ("farinaTailSec"));
+
     lastActiveAnalysisIndex = (int) *apvts.getRawParameterValue ("activeAnalysis");
 }
 
@@ -282,6 +317,7 @@ void WTAnalyzerAudioProcessor::runSpectrumFft()
         aliasingDetection.reset();
         imdMeasurement   .reset();
         impulseResponse  .reset();
+        farinaIR         .reset();
         lastActiveAnalysisIndex = activeIndex;
     }
 
@@ -466,12 +502,18 @@ void WTAnalyzerAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     // per-sample pre/post pair when its mode is active, since IR works on
     // raw time-domain samples (not the spectrum FFT output).
     const int activeIndexLocal = (int) *apvts.getRawParameterValue ("activeAnalysis");
-    const bool irActive = activeIndexLocal == (int) AnalysisMode::ImpulseResponse;
+    const bool irActive       = activeIndexLocal == (int) AnalysisMode::DirectImpulseIR;
+    const bool farinaActive   = activeIndexLocal == (int) AnalysisMode::FarinaIR;
 
     // Poll window / average params each block so UI changes take effect
     // promptly. Cheap; only invalidates state if values actually changed.
     impulseResponse.setWindowMs    ((int) *apvts.getRawParameterValue ("irWindowMs"));
     impulseResponse.setAverageGoal ((int) *apvts.getRawParameterValue ("irAverageCount"));
+
+    farinaIR.setSweepParams (*apvts.getRawParameterValue ("farinaF0Hz"),
+                             *apvts.getRawParameterValue ("farinaF1Hz"),
+                             *apvts.getRawParameterValue ("farinaSweepSec"),
+                             *apvts.getRawParameterValue ("farinaTailSec"));
 
     if (postBus.getNumChannels() > 0)
     {
@@ -494,6 +536,9 @@ void WTAnalyzerAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
 
             if (irActive)
                 impulseResponse.processSample (preCh0 ? preCh0[n] : 0.0f, postCh0[n]);
+
+            if (farinaActive)
+                farinaIR.processSample (preCh0 ? preCh0[n] : 0.0f, postCh0[n]);
         }
     }
 
