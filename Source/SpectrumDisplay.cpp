@@ -348,7 +348,24 @@ void SpectrumDisplay::paint (juce::Graphics& g)
     const float logMin   = std::log10 (viewMinFreq);
     const float logMax   = std::log10 (viewMaxFreq);
     const float logRange = logMax - logMin;
-    const float dbRange  = viewMaxDb - viewMinDb;
+
+    // L / R / Diff toggles. Diff is an exclusive view (when on, L and R
+    // are forced off by the editor's toggle handlers), so diffMode here
+    // can just check showDiff. In diff mode the Y axis switches to a
+    // bipolar centred-on-zero range so the R - L trace is meaningful;
+    // the user's regular mouse-zoomed range is preserved for the next
+    // L/R view.
+    const bool showL    = *processor.apvts.getRawParameterValue ("showChannelL")    > 0.5f;
+    const bool showR    = *processor.apvts.getRawParameterValue ("showChannelR")    > 0.5f;
+    const bool showDiff = *processor.apvts.getRawParameterValue ("showChannelDiff") > 0.5f;
+    const bool diffMode = showDiff;
+
+    constexpr float kDiffMinDb = -30.0f;
+    constexpr float kDiffMaxDb = +30.0f;
+
+    const float effMinDb = diffMode ? kDiffMinDb : viewMinDb;
+    const float effMaxDb = diffMode ? kDiffMaxDb : viewMaxDb;
+    const float dbRange  = effMaxDb - effMinDb;
 
     auto freqToX = [&] (float freq) -> float
     {
@@ -358,8 +375,20 @@ void SpectrumDisplay::paint (juce::Graphics& g)
 
     auto dbToY = [&] (float db) -> float
     {
-        const float t = (db - viewMinDb) / dbRange;
+        const float t = (db - effMinDb) / dbRange;
         return (float) plotArea.getY() + (1.0f - t) * (float) plotArea.getHeight();
+    };
+
+    // FR-mode 2D sweep capture takes over the Y axis when active. Y goes
+    // 0..1 in sweep position (0 at the bottom of the plot, 1 at the top),
+    // replacing the dB axis entirely. The X axis stays as log frequency.
+    const int  activeAnalysisIdxEarly = (int) *processor.apvts.getRawParameterValue ("activeAnalysis");
+    const bool sweepHeatmapMode = (activeAnalysisIdxEarly == (int) WTAnalyzerAudioProcessor::AnalysisMode::FrequencyResponse)
+                              && (*processor.apvts.getRawParameterValue ("sweepCaptureActive") > 0.5f);
+
+    auto posToY = [&] (float pos) -> float
+    {
+        return (float) plotArea.getBottom() - pos * (float) plotArea.getHeight();
     };
 
     // Gridlines - skip any whose value is outside the current view.
@@ -373,18 +402,29 @@ void SpectrumDisplay::paint (juce::Graphics& g)
         g.drawLine (x, (float) plotArea.getY(), x, (float) plotArea.getBottom(), sf (1.0f));
     }
 
-    // Uniform 12 dB stepping throughout - matches the convention used by
-    // EQ-focused analyzers (Pro-Q, Plugin Doctor) and the "doubling rule"
-    // mental model audio engineers think in.
-    const std::array<float, 11> kDbGrid {
-        -72.0f, -60.0f, -48.0f, -36.0f, -24.0f, -12.0f,
-          0.0f,  12.0f,  24.0f,  36.0f,  48.0f
-    };
-    for (float db : kDbGrid)
+    if (! sweepHeatmapMode)
     {
-        if (db < viewMinDb || db > viewMaxDb) continue;
-        const float y = dbToY (db);
-        g.drawLine ((float) plotArea.getX(), y, (float) plotArea.getRight(), y, sf (1.0f));
+        // Normal dB gridlines, 12 dB stepping.
+        const std::array<float, 11> kDbGrid {
+            -72.0f, -60.0f, -48.0f, -36.0f, -24.0f, -12.0f,
+              0.0f,  12.0f,  24.0f,  36.0f,  48.0f
+        };
+        for (float db : kDbGrid)
+        {
+            if (db < effMinDb || db > effMaxDb) continue;
+            const float y = dbToY (db);
+            g.drawLine ((float) plotArea.getX(), y, (float) plotArea.getRight(), y, sf (1.0f));
+        }
+    }
+    else
+    {
+        // Sweep-position gridlines: quarter-divisions of the 0..1 range.
+        const std::array<float, 5> kPosGrid { 0.0f, 0.25f, 0.5f, 0.75f, 1.0f };
+        for (float pos : kPosGrid)
+        {
+            const float y = posToY (pos);
+            g.drawLine ((float) plotArea.getX(), y, (float) plotArea.getRight(), y, sf (1.0f));
+        }
     }
 
     // Axis labels.
@@ -410,23 +450,44 @@ void SpectrumDisplay::paint (juce::Graphics& g)
         g.drawText (label.text, r, juce::Justification::centredTop, false);
     }
 
-    struct DbLabel { float db; const char* text; };
-    const std::array<DbLabel, 11> kDbLabels {{
-        { 48.0f,  "+48" }, { 36.0f,  "+36" }, { 24.0f,  "+24" },
-        { 12.0f,  "+12" }, { 0.0f,    "0"  }, { -12.0f, "-12" },
-        { -24.0f, "-24" }, { -36.0f, "-36" }, { -48.0f, "-48" },
-        { -60.0f, "-60" }, { -72.0f, "-72" }
-    }};
-    for (auto label : kDbLabels)
+    if (! sweepHeatmapMode)
     {
-        if (label.db < viewMinDb || label.db > viewMaxDb) continue;
-        const float y = dbToY (label.db);
-        const int textHeight = sx (12);
-        juce::Rectangle<int> r (labelGutterLeft.getX(),
-                                (int) y - textHeight / 2,
-                                labelGutterLeft.getWidth() - sx (4),
-                                textHeight);
-        g.drawText (label.text, r, juce::Justification::centredRight, false);
+        struct DbLabel { float db; const char* text; };
+        const std::array<DbLabel, 11> kDbLabels {{
+            { 48.0f,  "+48" }, { 36.0f,  "+36" }, { 24.0f,  "+24" },
+            { 12.0f,  "+12" }, { 0.0f,    "0"  }, { -12.0f, "-12" },
+            { -24.0f, "-24" }, { -36.0f, "-36" }, { -48.0f, "-48" },
+            { -60.0f, "-60" }, { -72.0f, "-72" }
+        }};
+        for (auto label : kDbLabels)
+        {
+            if (label.db < effMinDb || label.db > effMaxDb) continue;
+            const float y = dbToY (label.db);
+            const int textHeight = sx (12);
+            juce::Rectangle<int> r (labelGutterLeft.getX(),
+                                    (int) y - textHeight / 2,
+                                    labelGutterLeft.getWidth() - sx (4),
+                                    textHeight);
+            g.drawText (label.text, r, juce::Justification::centredRight, false);
+        }
+    }
+    else
+    {
+        struct PosLabel { float pos; const char* text; };
+        const std::array<PosLabel, 5> kPosLabels {{
+            { 1.0f,  "1.0"  }, { 0.75f, "0.75" }, { 0.5f, "0.5" },
+            { 0.25f, "0.25" }, { 0.0f,  "0.0"  }
+        }};
+        for (auto label : kPosLabels)
+        {
+            const float y = posToY (label.pos);
+            const int textHeight = sx (12);
+            juce::Rectangle<int> r (labelGutterLeft.getX(),
+                                    (int) y - textHeight / 2,
+                                    labelGutterLeft.getWidth() - sx (4),
+                                    textHeight);
+            g.drawText (label.text, r, juce::Justification::centredRight, false);
+        }
     }
 
     // Restrict trace drawing to the plot area so curves outside the visible
@@ -450,7 +511,7 @@ void SpectrumDisplay::paint (juce::Graphics& g)
                 if (f < viewMinFreq) continue;
                 if (f > viewMaxFreq) break;
 
-                const float clampedDb = juce::jlimit (viewMinDb, viewMaxDb, spec[bin]);
+                const float clampedDb = juce::jlimit (effMinDb, effMaxDb, spec[bin]);
                 const float x = freqToX (f);
                 const float y = dbToY (clampedDb);
 
@@ -485,7 +546,7 @@ void SpectrumDisplay::paint (juce::Graphics& g)
                     continue;
                 }
 
-                const float clampedDb = juce::jlimit (viewMinDb, viewMaxDb, v);
+                const float clampedDb = juce::jlimit (effMinDb, effMaxDb, v);
                 const float x = freqToX (f);
                 const float y = dbToY (clampedDb);
 
@@ -497,58 +558,35 @@ void SpectrumDisplay::paint (juce::Graphics& g)
             g.strokePath (path, juce::PathStrokeType (sf (strokeW)));
         };
 
-        const int activeAnalysisIdx = (int) *processor.apvts.getRawParameterValue ("activeAnalysis");
-        const bool inAliasingMode  = activeAnalysisIdx
-                                  == (int) WTAnalyzerAudioProcessor::AnalysisMode::AliasingDetection;
-        const int aliasView = inAliasingMode ? aliasingViewIndex() : 0;
-
-        // Outside AliasingDetection mode the universal pre + post overlay
-        // applies (live, no Hold). Inside AliasingDetection the view
-        // toggle (Composite / Pre / Post) plus the Hold toggle decide
-        // which data renders. Hold pulls from the peak-held arrays the
-        // AliasingDetection class maintains; live pulls from the
-        // processor's spectrum arrays directly.
-        if (! inAliasingMode)
+        // Sign-coloured bipolar trace renderer. Used in Diff mode where the
+        // value is R - L per bin and the trace can be positive (R louder)
+        // or negative (L louder). Draws the full path twice with clipping:
+        // upper-half clip stroked in the R-variant colour, lower-half clip
+        // stroked in the L-master colour. Where the trace crosses zero,
+        // each segment ends up rendered in the right half automatically.
+        // `valueAt(bin)` returns the bipolar value (R - L) or
+        // kNoMeasurementDb-style sentinel (caller decides the threshold).
+        auto plotBipolarTrace = [&] (auto valueAt, int count,
+                                     juce::Colour posColour, juce::Colour negColour,
+                                     float sentinelFloor, float strokeW)
         {
-            plotTrace (processor.preSpectrumDb,  WTColors::preEffect);
-            plotTrace (processor.postSpectrumDb, WTColors::postEffect);
-        }
-        else if (aliasView == 1)   // Pre - always live, Hold doesn't apply
-        {
-            plotTrace (processor.preSpectrumDb, WTColors::preEffect);
-        }
-        else if (aliasView == 2)   // Post - always live, Hold doesn't apply
-        {
-            plotTrace (processor.postSpectrumDb, WTColors::postEffect);
-        }
-
-        // When FrequencyResponse mode is active, overlay the transfer function
-        // trace. Bins flagged as "no measurement" (pre too quiet) break the path
-        // so the curve doesn't fake a value where none exists.
-        if (activeAnalysisIdx == (int) WTAnalyzerAudioProcessor::AnalysisMode::FrequencyResponse)
-        {
-            const auto& response = processor.frequencyResponse.getResponseDb();
-            const int   N            = (int) response.size();
-            const float binFreqScale = sr / (float) WTAnalyzerAudioProcessor::kSpectrumFftSize;
-
             juce::Path path;
             bool       hasOpenSubPath = false;
 
-            for (int bin = 1; bin < N; ++bin)
+            for (int bin = 1; bin < count; ++bin)
             {
                 const float f = (float) bin * binFreqScale;
                 if (f < viewMinFreq) continue;
                 if (f > viewMaxFreq) break;
 
-                const float db = response[(size_t) bin];
-
-                if (db <= FrequencyResponse::kNoMeasurementDb + 0.5f)
+                const float v = valueAt (bin);
+                if (v <= sentinelFloor + 0.5f)
                 {
                     hasOpenSubPath = false;
                     continue;
                 }
 
-                const float clampedDb = juce::jlimit (viewMinDb, viewMaxDb, db);
+                const float clampedDb = juce::jlimit (effMinDb, effMaxDb, v);
                 const float x = freqToX (f);
                 const float y = dbToY (clampedDb);
 
@@ -556,8 +594,182 @@ void SpectrumDisplay::paint (juce::Graphics& g)
                 else                  { path.lineTo          (x, y); }
             }
 
-            g.setColour (WTColors::analysis);
-            g.strokePath (path, juce::PathStrokeType (sf (1.6f)));
+            const int zeroY = juce::roundToInt (dbToY (0.0f));
+
+            // Upper half (y < zeroY): trace is positive, R is louder -> posColour.
+            {
+                juce::Graphics::ScopedSaveState save (g);
+                g.reduceClipRegion (plotArea.getX(),
+                                    plotArea.getY(),
+                                    plotArea.getWidth(),
+                                    juce::jmax (0, zeroY - plotArea.getY()));
+                g.setColour (posColour);
+                g.strokePath (path, juce::PathStrokeType (sf (strokeW)));
+            }
+
+            // Lower half (y > zeroY): trace is negative, L is louder -> negColour.
+            {
+                juce::Graphics::ScopedSaveState save (g);
+                g.reduceClipRegion (plotArea.getX(),
+                                    zeroY,
+                                    plotArea.getWidth(),
+                                    juce::jmax (0, plotArea.getBottom() - zeroY));
+                g.setColour (negColour);
+                g.strokePath (path, juce::PathStrokeType (sf (strokeW)));
+            }
+        };
+
+        const int activeAnalysisIdx = (int) *processor.apvts.getRawParameterValue ("activeAnalysis");
+        const bool inAliasingMode  = activeAnalysisIdx
+                                  == (int) WTAnalyzerAudioProcessor::AnalysisMode::AliasingDetection;
+        const int aliasView = inAliasingMode ? aliasingViewIndex() : 0;
+
+        // In Diff mode draw a dim zero baseline so the bipolar trace has a
+        // visual reference. Skipped in heatmap mode (Y axis is sweep pos).
+        if (diffMode && ! sweepHeatmapMode)
+        {
+            g.setColour (juce::Colour (0xff444a52));
+            const float yZero = dbToY (0.0f);
+            g.drawLine ((float) plotArea.getX(), yZero,
+                        (float) plotArea.getRight(), yZero, sf (1.0f));
+        }
+
+        // FR sweep-heatmap mode keeps its own L-only render path - the
+        // toggles don't apply here yet (heatmap diff is a future change).
+        if (sweepHeatmapMode)
+        {
+            const float binFreqScale = sr / (float) WTAnalyzerAudioProcessor::kSpectrumFftSize;
+            renderSweepHeatmap (g, plotArea,
+                                viewMinFreq, viewMaxFreq,
+                                viewMinDb,   viewMaxDb,
+                                binFreqScale);
+
+            // "You are here" indicator: a horizontal line at the
+            // current sweepPosition so the user can see where in the
+            // heatmap the next captured FR row will land.
+            const float currentPos = juce::jlimit (0.0f, 1.0f,
+                (float) *processor.apvts.getRawParameterValue ("sweepPosition"));
+            const float y = posToY (currentPos);
+            g.setColour (juce::Colours::whitesmoke.withAlpha (0.7f));
+            g.drawLine ((float) plotArea.getX(), y, (float) plotArea.getRight(), y, sf (1.2f));
+        }
+        else if (diffMode && ! inAliasingMode)
+        {
+            // Generic Overlay / FR mode in Diff view: show pre_R - pre_L
+            // and post_R - post_L spectrum diffs as sign-coloured bipolar
+            // traces. Each diff uses its channel's L/R colour pair so the
+            // semantic identity (pre vs post) stays clear, while sign
+            // colour reveals which channel is louder per bin.
+            plotBipolarTrace ([&] (int bin) {
+                return processor.preSpectrumDb_R[bin] - processor.preSpectrumDb[bin];
+            }, N, WTColors::preEffect_R, WTColors::preEffect, -1000.0f, 1.2f);
+
+            plotBipolarTrace ([&] (int bin) {
+                return processor.postSpectrumDb_R[bin] - processor.postSpectrumDb[bin];
+            }, N, WTColors::postEffect_R, WTColors::postEffect, -1000.0f, 1.2f);
+        }
+        else if (diffMode && inAliasingMode && aliasView == 1)   // Aliasing Pre diff
+        {
+            plotBipolarTrace ([&] (int bin) {
+                return processor.preSpectrumDb_R[bin] - processor.preSpectrumDb[bin];
+            }, N, WTColors::preEffect_R, WTColors::preEffect, -1000.0f, 1.2f);
+        }
+        else if (diffMode && inAliasingMode && aliasView == 2)   // Aliasing Post diff
+        {
+            plotBipolarTrace ([&] (int bin) {
+                return processor.postSpectrumDb_R[bin] - processor.postSpectrumDb[bin];
+            }, N, WTColors::postEffect_R, WTColors::postEffect, -1000.0f, 1.2f);
+        }
+        else if (! inAliasingMode)
+        {
+            // Normal (non-Diff) view. Draw order: R first (underneath),
+            // L on top. See feedback-stereo-lr-diff-convention memory.
+            if (showR)
+            {
+                plotTrace (processor.preSpectrumDb_R,  WTColors::preEffect_R);
+                plotTrace (processor.postSpectrumDb_R, WTColors::postEffect_R);
+            }
+            if (showL)
+            {
+                plotTrace (processor.preSpectrumDb,    WTColors::preEffect);
+                plotTrace (processor.postSpectrumDb,   WTColors::postEffect);
+            }
+        }
+        else if (aliasView == 1)   // Pre - always live, Hold doesn't apply
+        {
+            if (showR) plotTrace (processor.preSpectrumDb_R, WTColors::preEffect_R);
+            if (showL) plotTrace (processor.preSpectrumDb,   WTColors::preEffect);
+        }
+        else if (aliasView == 2)   // Post - always live, Hold doesn't apply
+        {
+            if (showR) plotTrace (processor.postSpectrumDb_R, WTColors::postEffect_R);
+            if (showL) plotTrace (processor.postSpectrumDb,   WTColors::postEffect);
+        }
+
+        // When FrequencyResponse mode is active and we are NOT in sweep
+        // heatmap mode, overlay the transfer-function trace per channel
+        // plus the optional Diff trace. Bins flagged as "no measurement"
+        // (pre too quiet) break the path so curves don't fake values
+        // where none exist. Draw order: R first (underneath), L on top,
+        // Diff overlaid on top of both per the stereo convention.
+        if (! sweepHeatmapMode
+            && activeAnalysisIdx == (int) WTAnalyzerAudioProcessor::AnalysisMode::FrequencyResponse)
+        {
+            const float binFreqScale = sr / (float) WTAnalyzerAudioProcessor::kSpectrumFftSize;
+
+            auto drawFrTrace = [&] (const std::vector<float>& response,
+                                    juce::Colour colour)
+            {
+                const int M = (int) response.size();
+                juce::Path path;
+                bool       hasOpenSubPath = false;
+
+                for (int bin = 1; bin < M; ++bin)
+                {
+                    const float f = (float) bin * binFreqScale;
+                    if (f < viewMinFreq) continue;
+                    if (f > viewMaxFreq) break;
+
+                    const float db = response[(size_t) bin];
+
+                    if (db <= FrequencyResponse::kNoMeasurementDb + 0.5f)
+                    {
+                        hasOpenSubPath = false;
+                        continue;
+                    }
+
+                    const float clampedDb = juce::jlimit (effMinDb, effMaxDb, db);
+                    const float x = freqToX (f);
+                    const float y = dbToY (clampedDb);
+
+                    if (! hasOpenSubPath) { path.startNewSubPath (x, y); hasOpenSubPath = true; }
+                    else                  { path.lineTo          (x, y); }
+                }
+
+                g.setColour (colour);
+                g.strokePath (path, juce::PathStrokeType (sf (1.6f)));
+            };
+
+            if (diffMode)
+            {
+                // FR Diff: render the precomputed FR_R - FR_L array as a
+                // sign-coloured bipolar trace. analysis_R (lighter green)
+                // for positive bins (R has more gain), analysis (master
+                // chartreuse) for negative bins (L has more gain).
+                const auto& diff = processor.frequencyResponse.getResponseDb_Diff();
+                const int M = (int) diff.size();
+                plotBipolarTrace ([&] (int bin) { return diff[(size_t) bin]; },
+                                  M,
+                                  WTColors::analysis_R, WTColors::analysis,
+                                  FrequencyResponse::kNoMeasurementDb, 1.6f);
+            }
+            else
+            {
+                if (showR)
+                    drawFrTrace (processor.frequencyResponse.getResponseDb_R(), WTColors::analysis_R);
+                if (showL)
+                    drawFrTrace (processor.frequencyResponse.getResponseDb(),   WTColors::analysis);
+            }
         }
 
         // AliasingDetection composite view: the input signal (pre)
@@ -573,17 +785,39 @@ void SpectrumDisplay::paint (juce::Graphics& g)
         // a sweep accumulates the full picture.
         if (inAliasingMode && aliasView == 0)
         {
-            // Amber pre trace is always live - Hold only applies to the
-            // green differential, since the user-relevant accumulated
-            // measurement is "what aliasing did the device produce
-            // across the sweep", not "where was the input signal".
-            plotTrace (processor.preSpectrumDb, WTColors::preEffect);
+            const auto& liveL = processor.aliasingDetection.getLiveDifferentialDb();
+            const auto& liveR = processor.aliasingDetection.getLiveDifferentialDb_R();
+            const auto& peakL = processor.aliasingDetection.getPeakDifferentialDb();
+            const auto& peakR = processor.aliasingDetection.getPeakDifferentialDb_R();
+            const auto& liveD = processor.aliasingDetection.getLiveDifferentialDb_Diff();
+            const auto& peakD = processor.aliasingDetection.getPeakDifferentialDb_Diff();
 
-            const float* diffSource = isAliasingHolding
-                ? processor.aliasingDetection.getPeakDifferentialDb().data()
-                : processor.aliasingDetection.getLiveDifferentialDb().data();
+            if (diffMode)
+            {
+                // Diff view: alias_R - alias_L as a sign-coloured bipolar
+                // trace. The pre trace is omitted - in Diff view the user
+                // is focused on channel asymmetry, not absolute level.
+                const float* aliasD = (isAliasingHolding ? peakD : liveD).data();
+                plotBipolarTrace ([&] (int bin) { return aliasD[bin]; },
+                                  N,
+                                  WTColors::analysis_R, WTColors::analysis,
+                                  AliasingDetection::kNoMeasurementDb, 1.6f);
+            }
+            else
+            {
+                // Pre trace is always live - Hold only applies to the alias
+                // residue, since the user-relevant accumulated measurement is
+                // "what aliasing did the device produce across the sweep",
+                // not "where was the input signal".
+                if (showR) plotTrace (processor.preSpectrumDb_R, WTColors::preEffect_R);
+                if (showL) plotTrace (processor.preSpectrumDb,   WTColors::preEffect);
 
-            plotSparseTrace (diffSource, N, WTColors::analysis, 1.6f);
+                const float* aliasR = (isAliasingHolding ? peakR : liveR).data();
+                const float* aliasL = (isAliasingHolding ? peakL : liveL).data();
+
+                if (showR) plotSparseTrace (aliasR, N, WTColors::analysis_R, 1.6f);
+                if (showL) plotSparseTrace (aliasL, N, WTColors::analysis,   1.6f);
+            }
         }
 
         // HUD: peak alias readout in the top-right of the plot, shown
@@ -593,28 +827,124 @@ void SpectrumDisplay::paint (juce::Graphics& g)
         // since the last reset / Clear.
         if (inAliasingMode)
         {
-            const float peakDb = processor.aliasingDetection.getPeakResidueDb();
-            const float peakHz = processor.aliasingDetection.getPeakResidueHz();
-
-            juce::String hudText;
-            if (peakDb <= AliasingDetection::kNoMeasurementDb + 1.0f)
+            auto formatHz = [] (float hz) -> juce::String
             {
-                hudText = "No alias residue detected";
-            }
-            else
+                if (hz < 1000.0f)  return juce::String ((int) std::round (hz)) + " Hz";
+                if (hz < 10000.0f) return juce::String (hz / 1000.0f, 2) + " kHz";
+                return juce::String (hz / 1000.0f, 1) + " kHz";
+            };
+
+            auto formatLine = [&] (float db, float hz) -> juce::String
             {
-                juce::String freqStr;
-                if      (peakHz < 1000.0f)  freqStr = juce::String ((int) std::round (peakHz)) + " Hz";
-                else if (peakHz < 10000.0f) freqStr = juce::String (peakHz / 1000.0f, 2) + " kHz";
-                else                        freqStr = juce::String (peakHz / 1000.0f, 1) + " kHz";
+                if (db <= AliasingDetection::kNoMeasurementDb + 1.0f)
+                    return "no residue";
+                return juce::String (db, 1) + " dB FS at " + formatHz (hz);
+            };
 
-                hudText = "Peak alias  " + juce::String (peakDb, 1) + " dB FS  at  " + freqStr;
-            }
+            const float lDb = processor.aliasingDetection.getPeakResidueDb();
+            const float lHz = processor.aliasingDetection.getPeakResidueHz();
+            const float rDb = processor.aliasingDetection.getPeakResidueDb_R();
+            const float rHz = processor.aliasingDetection.getPeakResidueHz_R();
 
-            g.setColour (WTColors::analysis);
+            const juce::String lLine = "L: " + formatLine (lDb, lHz);
+            const juce::String rLine = "R: " + formatLine (rDb, rHz);
+
             g.setFont (juce::FontOptions (sf (11.0f)));
-            auto hudRect = plotArea.reduced (sx (8)).removeFromTop (sx (16));
-            g.drawText (hudText, hudRect, juce::Justification::topRight, false);
+            auto hudRect = plotArea.reduced (sx (8));
+            auto lRect   = hudRect.removeFromTop (sx (16));
+            auto rRect   = hudRect.removeFromTop (sx (16));
+            g.setColour (WTColors::analysis);
+            g.drawText (lLine, lRect, juce::Justification::topRight, false);
+            g.setColour (WTColors::analysis_R);
+            g.drawText (rLine, rRect, juce::Justification::topRight, false);
         }
     }
+}
+
+void SpectrumDisplay::renderSweepHeatmap (juce::Graphics& g,
+                                          juce::Rectangle<int> plotArea,
+                                          float viewMinFreqLocal,
+                                          float viewMaxFreqLocal,
+                                          float viewMinDbLocal,
+                                          float viewMaxDbLocal,
+                                          float binFreqScale)
+{
+    const int W = plotArea.getWidth();
+    const int H = plotArea.getHeight();
+    if (W <= 0 || H <= 0) return;
+
+    juce::ignoreUnused (viewMinDbLocal, viewMaxDbLocal);   // colour mapping uses fixed dB anchors
+
+    const float logMin = std::log10 (viewMinFreqLocal);
+    const float logMax = std::log10 (viewMaxFreqLocal);
+    const float logRange = logMax - logMin;
+
+    const int numBuckets = processor.sweepCapture.getNumBuckets();
+    const int numBins    = processor.sweepCapture.getNumBins();
+
+    // Heatmap orientation:
+    //   X (width)  = log frequency        - matches the existing spectrum X axis
+    //   Y (height) = sweep position 0..1  - top = 1, bottom = 0 so increasing
+    //                                       position reads upward like increasing
+    //                                       dB does in the normal spectrum view.
+    //   colour     = FR response dB at that (freq, position) cell.
+
+    constexpr float kBottomDb = -60.0f;
+    constexpr float kTopDb    =  12.0f;
+    const juce::Colour belowFloor   = juce::Colour (0xff181a1d);
+    const juce::Colour atFloor      = juce::Colour (0xff000000);
+    const juce::Colour atUnity      = WTColors::analysis;
+    const juce::Colour atTop        = juce::Colour (0xffe85a4a);
+
+    auto dbToColour = [&] (float db) -> juce::Colour
+    {
+        if (db <= SweepCapture::kNoDataDb + 1.0f) return belowFloor;
+        if (db < kBottomDb) return atFloor;
+        if (db < 0.0f)
+        {
+            const float t = (db - kBottomDb) / (0.0f - kBottomDb);
+            return atFloor.interpolatedWith (atUnity, juce::jlimit (0.0f, 1.0f, t));
+        }
+        if (db < kTopDb)
+        {
+            const float t = db / kTopDb;
+            return atUnity.interpolatedWith (atTop, juce::jlimit (0.0f, 1.0f, t));
+        }
+        return atTop;
+    };
+
+    juce::Image image (juce::Image::RGB, W, H, false);
+    juce::Image::BitmapData bitmap (image, juce::Image::BitmapData::writeOnly);
+
+    // Precompute per-column freq->bin lookup (log frequency mapping).
+    std::vector<int> colBin ((size_t) W, 0);
+    for (int px = 0; px < W; ++px)
+    {
+        const float xNorm = (float) px / (float) std::max (1, W - 1);
+        const float logF  = logMin + xNorm * logRange;
+        const float freq  = std::pow (10.0f, logF);
+        colBin[(size_t) px] = juce::jlimit (0, numBins - 1,
+                                            (int) (freq / binFreqScale + 0.5f));
+    }
+
+    for (int py = 0; py < H; ++py)
+    {
+        // py 0 = top of plot = sweep position 1; py H-1 = bottom = position 0.
+        const float yNorm  = 1.0f - (float) py / (float) std::max (1, H - 1);
+        const int   bucket = juce::jlimit (0, numBuckets - 1,
+                                           (int) (yNorm * (float) (numBuckets - 1) + 0.5f));
+        auto* row = bitmap.getLinePointer (py);
+
+        for (int px = 0; px < W; ++px)
+        {
+            const int   bin = colBin[(size_t) px];
+            const float db  = processor.sweepCapture.getValue (bucket, bin);
+            const auto  col = dbToColour (db);
+            row[px * (int) bitmap.pixelStride + 0] = col.getBlue();
+            row[px * (int) bitmap.pixelStride + 1] = col.getGreen();
+            row[px * (int) bitmap.pixelStride + 2] = col.getRed();
+        }
+    }
+
+    g.drawImageAt (image, plotArea.getX(), plotArea.getY());
 }

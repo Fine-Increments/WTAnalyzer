@@ -122,5 +122,42 @@ private:
     static juce::String getModeHelpText (int modeIndex);
     static juce::String getModeName (int modeIndex);
 
+    // Capture / Clear pair lives in the header for consistency across
+    // modes; the two pairs (FR sweep recorder vs Farina IR one-shot
+    // trigger) share the same header slot, with visibility decided by
+    // applyAnalysisMode based on which mode is currently active. They
+    // do conceptually different things but the visual location stays
+    // the same so the user doesn't have to hunt for action buttons.
+    juce::TextButton sweepCaptureButton  { "Capture" };
+    juce::TextButton sweepClearButton    { "Clear" };
+    juce::TextButton farinaCaptureButton { "Capture" };
+    juce::TextButton farinaClearButton   { "Clear" };
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> sweepCaptureAttachment;
+
+    // L / R / Diff toggle row - shared across every mode that uses the
+    // stereo display convention (PLANNING.md 8.5.1). L and R are
+    // independent on/off; at least one must stay on (auto-flip-back
+    // enforced in the click handler). Diff is an additive overlay.
+    // Lives in the readout strip below the spectrum, alongside the
+    // cursor x/y readout, and is hidden in modes that don't participate
+    // in this convention yet.
+    juce::TextButton stereoLButton    { "L" };
+    juce::TextButton stereoRButton    { "R" };
+    juce::TextButton stereoDiffButton { "Diff" };
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> stereoLAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> stereoRAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> stereoDiffAttachment;
+
+    // Inline stereo-imbalance readout. Sits in the readout strip between
+    // the cursor readout (left) and the L / R / Diff toggles (right).
+    // Format is mode-specific: spectrum-based modes show "max diff at Hz",
+    // bar modes show numeric L vs R deltas, IR modes show max sample diff.
+    // Replaces the planned popup dashboard - keeping it inline avoids
+    // having to run every analysis concurrently to populate cross-mode
+    // numbers (only the active mode's analysis runs per spectrum hop).
+    juce::Label imbalanceReadout;
+    void updateImbalanceReadout();
+    juce::String computeImbalanceText() const;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (WTAnalyzerAudioProcessorEditor)
 };

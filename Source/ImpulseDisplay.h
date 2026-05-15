@@ -47,6 +47,7 @@ private:
     float uiScale = 1.0f;
 
     juce::TextButton clearButton  { "Clear" };
+    juce::TextButton exportButton { "Export..." };
     juce::Slider     windowSlider;
     juce::Slider     averagesSlider;
     juce::Label      windowLabel    { {}, "Window" };
@@ -54,6 +55,9 @@ private:
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> windowAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> averagesAttachment;
+
+    void exportIRToWav();
+    std::shared_ptr<juce::FileChooser> exportChooser;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ImpulseDisplay)
 };

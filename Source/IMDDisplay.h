@@ -37,7 +37,7 @@ private:
     int   sx (int   v) const noexcept { return juce::roundToInt ((float) v * uiScale); }
     float sf (float v) const noexcept { return v * uiScale; }
 
-    struct DisplayFrame
+    struct ChannelFrame
     {
         bool  valid       = false;
         float imdPercent  = 0.0f;
@@ -47,9 +47,17 @@ private:
         float preF2Db     = IMDMeasurement::kNoMeasurementDb;
         float postF1Db    = IMDMeasurement::kNoMeasurementDb;
         float postF2Db    = IMDMeasurement::kNoMeasurementDb;
+        std::array<float, IMDMeasurement::kNumProducts> productHz {};
 
         // [source: Diff=0, Pre=1, Post=2][product index]
         std::array<std::array<float, IMDMeasurement::kNumProducts>, 3> ratioDb {};
+    };
+
+    struct DisplayFrame
+    {
+        ChannelFrame L;
+        ChannelFrame R;
+        bool anyValid() const noexcept { return L.valid || R.valid; }
     };
 
     DisplayFrame sampleProcessor() const;
@@ -58,8 +66,9 @@ private:
     void drawProductBars (juce::Graphics& g, juce::Rectangle<int> area);
 
     IMDMeasurement::Source currentViewSource() const noexcept;
-    juce::Colour            currentViewColour() const noexcept;
-    void                    syncToggleButtons();
+    struct ViewColours { juce::Colour L; juce::Colour R; };
+    ViewColours              currentViewColours() const noexcept;
+    void                     syncToggleButtons();
 
     WTAnalyzerAudioProcessor& processor;
     float uiScale = 1.0f;
@@ -80,15 +89,31 @@ private:
     void updateLayoutButtonText();
     bool isHzLayout() const noexcept { return layoutButton.getToggleState(); }
 
+    // Sub-bar descriptor used by both By-Order and By-Hz layouts. Each
+    // visible sub-bar has a single-character tag ('L', 'R', 'D') and the
+    // colour to draw it in. Diff bars compute R-L at render time.
+    struct SubBar { char tag; juce::Colour colour; };
+
+    struct BarAxisConfig
+    {
+        bool   diffMode;
+        float  axisMinDb;
+        float  axisMaxDb;
+    };
+
     void drawProductBarsByOrder (juce::Graphics&, juce::Rectangle<int> plotArea,
                                  juce::Rectangle<int> labelGutterBottom,
-                                 const std::array<float, IMDMeasurement::kNumProducts>& ratios,
-                                 juce::Colour barColour);
+                                 int sourceIdx,
+                                 const juce::Array<SubBar>& visible,
+                                 ViewColours cols,
+                                 BarAxisConfig axis);
 
     void drawProductBarsByHz    (juce::Graphics&, juce::Rectangle<int> plotArea,
                                  juce::Rectangle<int> labelGutterBottom,
-                                 const std::array<float, IMDMeasurement::kNumProducts>& ratios,
-                                 juce::Colour barColour);
+                                 int sourceIdx,
+                                 const juce::Array<SubBar>& visible,
+                                 ViewColours cols,
+                                 BarAxisConfig axis);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (IMDDisplay)
 };

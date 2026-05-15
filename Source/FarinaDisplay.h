@@ -51,9 +51,6 @@ private:
     WTAnalyzerAudioProcessor& processor;
     float uiScale = 1.0f;
 
-    juce::TextButton captureButton { "Capture" };
-    juce::TextButton clearButton   { "Clear"   };
-
     juce::Slider f0Slider;
     juce::Slider f1Slider;
     juce::Slider sweepSlider;
@@ -64,10 +61,15 @@ private:
     juce::Label  sweepLabel { {}, "Sweep" };
     juce::Label  tailLabel  { {}, "Tail" };
 
+    juce::TextButton exportButton { "Export..." };
+
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> f0Attachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> f1Attachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> sweepAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> tailAttachment;
+
+    void exportIRToWav();
+    std::shared_ptr<juce::FileChooser> exportChooser;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (FarinaDisplay)
 };

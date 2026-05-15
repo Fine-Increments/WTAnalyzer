@@ -33,20 +33,28 @@ public:
     static constexpr float kNoMeasurementDb = -200.0f;
 
     // Called once after sample rate / spectrum size is known. Sizes the
-    // internal buffer; allocates. Not real-time-safe.
+    // internal buffers; allocates. Not real-time-safe.
     void prepare (int numBins);
 
-    // Resets the response buffer to "no measurement" everywhere. Cheap and
-    // real-time-safe. Called on mode switches so stale data isn't displayed.
+    // Resets all response buffers to "no measurement" everywhere. Cheap
+    // and real-time-safe. Called on mode switches so stale data isn't
+    // displayed.
     void reset();
 
-    // Computes post_dB - pre_dB per bin. Real-time-safe. Input arrays must
-    // each be at least getNumBins() floats long.
-    void update (const float* preDb, const float* postDb);
+    // Computes post_dB - pre_dB per bin, per channel, and the L vs R
+    // difference. Real-time-safe. Input arrays must each be at least
+    // getNumBins() floats long. The diff trace is R minus L in dB (so a
+    // perfectly symmetric plugin reads 0 dB across the spectrum).
+    void update (const float* preDbL,  const float* postDbL,
+                 const float* preDbR,  const float* postDbR);
 
-    const std::vector<float>& getResponseDb() const noexcept { return responseDb; }
-    int  getNumBins()                         const noexcept { return (int) responseDb.size(); }
+    const std::vector<float>& getResponseDb()     const noexcept { return responseDb;      }
+    const std::vector<float>& getResponseDb_R()   const noexcept { return responseDb_R;    }
+    const std::vector<float>& getResponseDb_Diff() const noexcept { return responseDb_Diff; }
+    int  getNumBins()                              const noexcept { return (int) responseDb.size(); }
 
 private:
-    std::vector<float> responseDb;
+    std::vector<float> responseDb;       // L channel  (post_L - pre_L)
+    std::vector<float> responseDb_R;     // R channel  (post_R - pre_R)
+    std::vector<float> responseDb_Diff;  // R - L      (channel asymmetry, dB)
 };

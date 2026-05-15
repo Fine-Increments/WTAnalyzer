@@ -57,7 +57,11 @@ private:
     // Snapshot of every value the bar chart + readouts need, so the rendering
     // path is decoupled from the audio-side THDMeasurement. timerCallback
     // refreshes / peak-holds this; paint() only reads it.
-    struct DisplayFrame
+    //
+    // Stereo: every per-channel field is stored once for L (master, suffix
+    // omitted) and once for R. Diff bars are computed from the held L and
+    // R arrays at paint time.
+    struct ChannelFrame
     {
         bool  valid             = false;
         float thdPercent        = 0.0f;
@@ -73,14 +77,27 @@ private:
         std::array<std::array<float, THDMeasurement::kMaxHarmonics>, 3> ratioDb {};
     };
 
+    struct DisplayFrame
+    {
+        ChannelFrame L;
+        ChannelFrame R;
+
+        // Either channel valid is sufficient for "show me the bars".
+        bool anyValid() const noexcept { return L.valid || R.valid; }
+    };
+
     DisplayFrame sampleProcessor() const;
     static int   sourceIndex (THDMeasurement::Source s) noexcept;
 
     void drawHarmonicBars (juce::Graphics& g, juce::Rectangle<int> area);
 
     THDMeasurement::Source currentViewSource() const noexcept;
-    juce::Colour            currentViewColour() const noexcept;
-    void                    syncToggleButtons();
+    // Returns the L and R bar colours appropriate for the currently
+    // selected source view (Diff -> analysis pair, Pre -> preEffect pair,
+    // Post -> postEffect pair).
+    struct ViewColours { juce::Colour L; juce::Colour R; };
+    ViewColours              currentViewColours() const noexcept;
+    void                     syncToggleButtons();
 
     WTAnalyzerAudioProcessor& processor;
     float uiScale = 1.0f;

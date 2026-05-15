@@ -1,27 +1,25 @@
 {
   "schema_version": 1,
-  "script": "chirp.py",
-  "analysis": "FarinaDeconvolution",
-  "generated_at": "2026-05-15T03:52:03.627205Z",
+  "script": "noise.py",
+  "analysis": "TransferFunctionFromNoise",
+  "generated_at": "2026-05-15T06:05:54.070053Z",
   "audio": {
     "sample_rate": 48000,
     "samples_per_frame": 2048,
-    "frame_count": 32,
+    "frame_count": 16,
     "format": "float32",
     "channels": 1
   },
   "parameters": {
-    "Type": "Log (Farina)",
-    "Start": 1,
-    "End": 256,
-    "#Frames": 32
+    "Color": "Pink",
+    "SeedOffset": 0,
+    "#Frames": 16
   },
   "command_line": [
-    "/Users/swgeniusvets/Documents/WTAnalyzer/scripts/chirp.py",
-    "Log (Farina)",
-    "1",
-    "256",
-    "32",
+    "/Users/swgeniusvets/Documents/WTAnalyzer/scripts/noise.py",
+    "Pink",
+    "0",
+    "16",
     "/Users/swgeniusvets/Documents/WTAnalyzer/scripts"
   ]
 }

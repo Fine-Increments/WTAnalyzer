@@ -73,11 +73,8 @@ public:
         IRReady           // Deconvolution complete; ir buffer is valid.
     };
 
-    // prepare() is intentionally lightweight: it only stores the sample
-    // rate and clears state. Heavy buffer / FFT allocation happens
-    // lazily inside requestCapture() so plugin instantiation stays fast
-    // at any sample rate (the worst-case FFT here is large and JUCE's
-    // precomputed twiddle tables take measurable time to build).
+    enum class Channel { L, R };
+
     void prepare (double sampleRate, int samplesPerBlock);
     void reset();
 
@@ -85,23 +82,40 @@ public:
     // any time from the message thread; takes effect on the next capture.
     void setSweepParams (float f0Hz, float f1Hz, float durationSec, float tailSec);
 
-    void requestCapture();   // Arms the trigger; audio thread starts watching pre.
+    void requestCapture();   // Arms both channels' triggers.
 
     // Audio-thread entry. Called per sample with the current pre and post
-    // values. Cheap when state == Idle / IRReady / ReadyToProcess.
-    void processSample (float preSample, float postSample);
+    // values for each channel. Each channel runs its own trigger
+    // detection and capture; both share the deconvolution FFT scratch on
+    // the message thread.
+    void processSample (float preL, float postL, float preR, float postR);
 
     // Message-thread entry. Call from a Timer; performs the deconvolution
-    // if a capture has completed and a result isn't already ready.
+    // for whichever channel(s) have completed capture since the last call.
     void tryProcessCapture();
 
-    State getState() const noexcept { return state.load (std::memory_order_acquire); }
+    // Aggregate state for "what should the display show as a status?".
+    // Returns the worst-progress channel state - i.e. Capturing if either
+    // channel is still capturing; Armed if either is armed; etc.
+    State getState() const noexcept;
 
-    int   getCaptureProgress() const noexcept { return captureProgress.load (std::memory_order_relaxed); }
-    int   getCaptureLength()   const noexcept { return captureLength  .load (std::memory_order_relaxed); }
-    int   getIRLength()        const noexcept { return irLength       .load (std::memory_order_relaxed); }
+    int   getCaptureProgress (Channel ch = Channel::L) const noexcept
+    {
+        return (ch == Channel::L ? chL : chR).captureProgress.load (std::memory_order_relaxed);
+    }
+    int   getCaptureLength   (Channel ch = Channel::L) const noexcept
+    {
+        return (ch == Channel::L ? chL : chR).captureLength.load (std::memory_order_relaxed);
+    }
+    int   getIRLength        (Channel ch = Channel::L) const noexcept
+    {
+        return (ch == Channel::L ? chL : chR).irLength.load (std::memory_order_relaxed);
+    }
 
-    const std::vector<float>& getIR() const noexcept { return ir; }
+    const std::vector<float>& getIR (Channel ch = Channel::L) const noexcept
+    {
+        return ch == Channel::L ? chL.ir : chR.ir;
+    }
     float getSampleRate() const noexcept { return sampleRate; }
 
     // For the display - read back the currently-set sweep parameters.
@@ -111,9 +125,21 @@ public:
     float getTailSec()     const noexcept { return tailSec; }
 
 private:
+    struct ChannelState
+    {
+        std::vector<float> postCapture;
+        std::vector<float> ir;
+        std::atomic<State> state           { State::Idle };
+        std::atomic<int>   captureProgress { 0 };
+        std::atomic<int>   captureLength   { 0 };
+        std::atomic<int>   irLength        { 0 };
+    };
+
     void generateInverseSweep (std::vector<float>& out,
                                float f0, float f1, float durationSec);
-    void runDeconvolution();
+    void runDeconvolution (ChannelState& ch);
+    void resetChannel     (ChannelState& ch);
+    void processChannel   (ChannelState& ch, float preSample, float postSample);
 
     // Allocates / re-allocates buffers and the FFT object to handle the
     // requested capture and filter sizes. Idempotent and cheap when the
@@ -121,29 +147,19 @@ private:
     // message thread inside requestCapture().
     void ensureCapacity (int captureSamples, int filterSamples);
 
-    float sampleRate     = 48000.0f;
+    float sampleRate = 48000.0f;
 
-    // FFT capacity sized once in prepare() for the worst-case
-    // (maxSweep + maxTail) at the current sample rate. The runtime
-    // capture / inverse filter are zero-padded into this fixed size.
-    int   fftOrder       = 0;
-    int   fftSize        = 0;
+    int   fftOrder = 0;
+    int   fftSize  = 0;
     std::unique_ptr<juce::dsp::FFT> fft;
 
-    std::vector<float> postCapture;   // raw post samples while capturing
-    std::vector<float> inverseSweep;  // generated mathematically per capture
-    std::vector<float> ir;            // extracted IR after deconvolution
-    std::vector<float> postScratch;   // 2 * fftSize for FFT work
-    std::vector<float> invScratch;    // 2 * fftSize for FFT work
+    std::vector<float> inverseSweep;
+    std::vector<float> postScratch;
+    std::vector<float> invScratch;
 
-    std::atomic<State> state           { State::Idle };
-    std::atomic<int>   captureProgress { 0 };
-    std::atomic<int>   captureLength   { 0 };
-    std::atomic<int>   irLength        { 0 };
+    ChannelState chL;
+    ChannelState chR;
 
-    // Current sweep params (set by UI). Audio thread reads only the
-    // capture length derived from these; the values themselves are read
-    // by the message thread for deconvolution.
     float f0Hz             = kDefaultF0Hz;
     float f1Hz             = kDefaultF1Hz;
     float sweepDurationSec = kDefaultSweepSec;

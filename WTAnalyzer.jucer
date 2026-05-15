@@ -78,6 +78,10 @@
               file="Source/Analyses/FarinaIR.cpp"/>
         <FILE id="FarI02" name="FarinaIR.h" compile="0" resource="0"
               file="Source/Analyses/FarinaIR.h"/>
+        <FILE id="SwCp01" name="SweepCapture.cpp" compile="1" resource="0"
+              file="Source/Analyses/SweepCapture.cpp"/>
+        <FILE id="SwCp02" name="SweepCapture.h" compile="0" resource="0"
+              file="Source/Analyses/SweepCapture.h"/>
       </GROUP>
     </GROUP>
   </MAINGROUP>

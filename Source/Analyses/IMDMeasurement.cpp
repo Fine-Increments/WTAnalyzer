@@ -20,6 +20,28 @@ void IMDMeasurement::resetSourceData (SourceData& d)
     std::fill (d.productRatioDb.begin(), d.productRatioDb.end(), kNoMeasurementDb);
 }
 
+void IMDMeasurement::resetChannel (ChannelState& ch)
+{
+    ch.valid      = false;
+    ch.f1Bin      = 0;
+    ch.f2Bin      = 0;
+    ch.f1Hz       = 0.0f;
+    ch.f2Hz       = 0.0f;
+    ch.preF1Db    = kNoMeasurementDb;
+    ch.preF2Db    = kNoMeasurementDb;
+    ch.postF1Db   = kNoMeasurementDb;
+    ch.postF2Db   = kNoMeasurementDb;
+    ch.imdPercent = 0.0f;
+    ch.imdDb      = kNoMeasurementDb;
+
+    resetSourceData (ch.preData);
+    resetSourceData (ch.postData);
+    resetSourceData (ch.diffData);
+
+    ch.productBin.fill (0);
+    ch.productHz .fill (0.0f);
+}
+
 void IMDMeasurement::prepare (int numSpectrumBins, float binFrequencyScale)
 {
     numBins      = numSpectrumBins;
@@ -29,27 +51,19 @@ void IMDMeasurement::prepare (int numSpectrumBins, float binFrequencyScale)
 
 void IMDMeasurement::reset()
 {
-    valid       = false;
-    f1Bin       = 0;
-    f2Bin       = 0;
-    f1Hz        = 0.0f;
-    f2Hz        = 0.0f;
-    preF1Db     = kNoMeasurementDb;
-    preF2Db     = kNoMeasurementDb;
-    postF1Db    = kNoMeasurementDb;
-    postF2Db    = kNoMeasurementDb;
-    imdPercent  = 0.0f;
-    imdDb       = kNoMeasurementDb;
-
-    resetSourceData (preData);
-    resetSourceData (postData);
-    resetSourceData (diffData);
-
-    productBin.fill (0);
-    productHz .fill (0.0f);
+    resetChannel (chL);
+    resetChannel (chR);
 }
 
-void IMDMeasurement::update (const float* preDb, const float* postDb)
+void IMDMeasurement::update (const float* preDbL, const float* postDbL,
+                             const float* preDbR, const float* postDbR)
+{
+    updateChannel (chL, preDbL, postDbL);
+    updateChannel (chR, preDbR, postDbR);
+}
+
+void IMDMeasurement::updateChannel (ChannelState& ch,
+                                    const float* preDb, const float* postDb)
 {
     constexpr float kMinUsefulFreq = 20.0f;
     constexpr float kMaxUsefulFreq = 20000.0f;
@@ -99,9 +113,9 @@ void IMDMeasurement::update (const float* preDb, const float* postDb)
         || peak1Db < kFundamentalMinDb
         || peak2Db < kFundamentalMinDb)
     {
-        valid      = false;
-        imdPercent = 0.0f;
-        imdDb      = kNoMeasurementDb;
+        ch.valid      = false;
+        ch.imdPercent = 0.0f;
+        ch.imdDb      = kNoMeasurementDb;
         return;
     }
 
@@ -109,53 +123,53 @@ void IMDMeasurement::update (const float* preDb, const float* postDb)
     // stable as the user sweeps pitch - by-amplitude labelling (textbook
     // f1 = louder) flips whenever scalloping loss makes the tones read
     // slightly unequal and is confusing in practice.
-    f1Bin = std::min (peak1Bin, peak2Bin);
-    f2Bin = std::max (peak1Bin, peak2Bin);
-    f1Hz  = (float) f1Bin * binFreqScale;
-    f2Hz  = (float) f2Bin * binFreqScale;
+    ch.f1Bin = std::min (peak1Bin, peak2Bin);
+    ch.f2Bin = std::max (peak1Bin, peak2Bin);
+    ch.f1Hz  = (float) ch.f1Bin * binFreqScale;
+    ch.f2Hz  = (float) ch.f2Bin * binFreqScale;
 
-    preF1Db  = preDb [f1Bin];
-    preF2Db  = preDb [f2Bin];
-    postF1Db = postDb[f1Bin];
-    postF2Db = postDb[f2Bin];
+    ch.preF1Db  = preDb [ch.f1Bin];
+    ch.preF2Db  = preDb [ch.f2Bin];
+    ch.postF1Db = postDb[ch.f1Bin];
+    ch.postF2Db = postDb[ch.f2Bin];
 
     // Resolve every product's bin and frequency. Bins are folded to
     // positive (negative-frequency products mirror onto the real spectrum).
     for (int i = 0; i < kNumProducts; ++i)
     {
         const auto& p = kProducts[(size_t) i];
-        const int   signedBin = p.m * f1Bin + p.sign * p.n * f2Bin;
+        const int   signedBin = p.m * ch.f1Bin + p.sign * p.n * ch.f2Bin;
         const int   bin       = std::abs (signedBin);
 
-        productBin[(size_t) i] = bin;
-        productHz [(size_t) i] = (float) bin * binFreqScale;
+        ch.productBin[(size_t) i] = bin;
+        ch.productHz [(size_t) i] = (float) bin * binFreqScale;
     }
 
-    resetSourceData (preData);
-    resetSourceData (postData);
-    resetSourceData (diffData);
+    resetSourceData (ch.preData);
+    resetSourceData (ch.postData);
+    resetSourceData (ch.diffData);
 
     // Normalize against the LOUDER of the two fundamentals so the
     // percentage stays meaningful for asymmetric test signals (SMPTE-style
     // 4:1 ratio, etc.). For equal-amplitude tests this picks whichever
     // happens to read marginally higher per frame, which is fine.
-    const float preF1Amp  = std::pow (10.0f, preF1Db / 20.0f);
-    const float preF2Amp  = std::pow (10.0f, preF2Db / 20.0f);
+    const float preF1Amp  = std::pow (10.0f, ch.preF1Db / 20.0f);
+    const float preF2Amp  = std::pow (10.0f, ch.preF2Db / 20.0f);
     const float preRefAmp = std::max (preF1Amp, preF2Amp);
 
     float diffPower = 0.0f;
 
     for (int i = 0; i < kNumProducts; ++i)
     {
-        const int bin = productBin[(size_t) i];
+        const int bin = ch.productBin[(size_t) i];
         if (bin <= 0 || bin >= numBins)
             continue;   // product folds out of range; skip
 
         const float preVal  = preDb [bin];
         const float postVal = postDb[bin];
 
-        preData .productDb[(size_t) i] = preVal;
-        postData.productDb[(size_t) i] = postVal;
+        ch.preData .productDb[(size_t) i] = preVal;
+        ch.postData.productDb[(size_t) i] = postVal;
 
         // Differential added-energy per product (same math as THD).
         const float preAmp  = std::pow (10.0f, preVal  / 20.0f);
@@ -168,56 +182,58 @@ void IMDMeasurement::update (const float* preDb, const float* postDb)
         if (preRefAmp > 1.0e-10f && addedAmp > 1.0e-12f)
         {
             const float ratio = addedAmp / preRefAmp;
-            diffData.productRatioDb[(size_t) i] = 20.0f * std::log10 (ratio);
-            diffData.productDb     [(size_t) i] = diffData.productRatioDb[(size_t) i];
+            ch.diffData.productRatioDb[(size_t) i] = 20.0f * std::log10 (ratio);
+            ch.diffData.productDb     [(size_t) i] = ch.diffData.productRatioDb[(size_t) i];
         }
         else
         {
-            diffData.productRatioDb[(size_t) i] = kNoMeasurementDb;
-            diffData.productDb     [(size_t) i] = kNoMeasurementDb;
+            ch.diffData.productRatioDb[(size_t) i] = kNoMeasurementDb;
+            ch.diffData.productDb     [(size_t) i] = kNoMeasurementDb;
         }
 
         // Classical ratios relative to the louder fundamental (same
         // reference the diff view uses, so bars are visually comparable
         // across views).
-        const float refDb = (preF1Amp >= preF2Amp) ? preF1Db : preF2Db;
-        preData .productRatioDb[(size_t) i] = preVal  - refDb;
-        postData.productRatioDb[(size_t) i] = postVal - refDb;
+        const float refDb = (preF1Amp >= preF2Amp) ? ch.preF1Db : ch.preF2Db;
+        ch.preData .productRatioDb[(size_t) i] = preVal  - refDb;
+        ch.postData.productRatioDb[(size_t) i] = postVal - refDb;
     }
 
     if (preRefAmp > 1.0e-10f)
     {
         const float imdRatio = std::sqrt (diffPower) / preRefAmp;
-        imdPercent = imdRatio * 100.0f;
-        imdDb      = 20.0f * std::log10 (imdRatio + 1.0e-10f);
+        ch.imdPercent = imdRatio * 100.0f;
+        ch.imdDb      = 20.0f * std::log10 (imdRatio + 1.0e-10f);
     }
     else
     {
-        imdPercent = 0.0f;
-        imdDb      = kNoMeasurementDb;
+        ch.imdPercent = 0.0f;
+        ch.imdDb      = kNoMeasurementDb;
     }
 
-    valid = true;
+    ch.valid = true;
 }
 
-float IMDMeasurement::getF1Db (Source s) const noexcept
+float IMDMeasurement::getF1Db (Source s, Channel chSel) const noexcept
 {
+    const auto& ch = get (chSel);
     switch (s)
     {
-        case Source::Pre:  return preF1Db;
-        case Source::Post: return postF1Db;
-        case Source::Diff: return postF1Db - preF1Db;
+        case Source::Pre:  return ch.preF1Db;
+        case Source::Post: return ch.postF1Db;
+        case Source::Diff: return ch.postF1Db - ch.preF1Db;
     }
     return kNoMeasurementDb;
 }
 
-float IMDMeasurement::getF2Db (Source s) const noexcept
+float IMDMeasurement::getF2Db (Source s, Channel chSel) const noexcept
 {
+    const auto& ch = get (chSel);
     switch (s)
     {
-        case Source::Pre:  return preF2Db;
-        case Source::Post: return postF2Db;
-        case Source::Diff: return postF2Db - preF2Db;
+        case Source::Pre:  return ch.preF2Db;
+        case Source::Post: return ch.postF2Db;
+        case Source::Diff: return ch.postF2Db - ch.preF2Db;
     }
     return kNoMeasurementDb;
 }
@@ -229,32 +245,34 @@ int IMDMeasurement::getProductOrder (int idx) const noexcept
     return p.m + p.n;
 }
 
-float IMDMeasurement::getProductHz (int idx) const noexcept
+float IMDMeasurement::getProductHz (int idx, Channel chSel) const noexcept
 {
     if (idx < 0 || idx >= kNumProducts) return 0.0f;
-    return productHz[(size_t) idx];
+    return get (chSel).productHz[(size_t) idx];
 }
 
-float IMDMeasurement::getProductDb (Source s, int idx) const noexcept
+float IMDMeasurement::getProductDb (Source s, int idx, Channel chSel) const noexcept
 {
     if (idx < 0 || idx >= kNumProducts) return kNoMeasurementDb;
+    const auto& ch = get (chSel);
     switch (s)
     {
-        case Source::Pre:  return preData .productDb[(size_t) idx];
-        case Source::Post: return postData.productDb[(size_t) idx];
-        case Source::Diff: return diffData.productDb[(size_t) idx];
+        case Source::Pre:  return ch.preData .productDb[(size_t) idx];
+        case Source::Post: return ch.postData.productDb[(size_t) idx];
+        case Source::Diff: return ch.diffData.productDb[(size_t) idx];
     }
     return kNoMeasurementDb;
 }
 
-float IMDMeasurement::getProductRatioDb (Source s, int idx) const noexcept
+float IMDMeasurement::getProductRatioDb (Source s, int idx, Channel chSel) const noexcept
 {
     if (idx < 0 || idx >= kNumProducts) return kNoMeasurementDb;
+    const auto& ch = get (chSel);
     switch (s)
     {
-        case Source::Pre:  return preData .productRatioDb[(size_t) idx];
-        case Source::Post: return postData.productRatioDb[(size_t) idx];
-        case Source::Diff: return diffData.productRatioDb[(size_t) idx];
+        case Source::Pre:  return ch.preData .productRatioDb[(size_t) idx];
+        case Source::Post: return ch.postData.productRatioDb[(size_t) idx];
+        case Source::Diff: return ch.diffData.productRatioDb[(size_t) idx];
     }
     return kNoMeasurementDb;
 }

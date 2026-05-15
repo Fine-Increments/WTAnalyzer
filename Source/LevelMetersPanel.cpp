@@ -46,56 +46,101 @@ void LevelMetersPanel::timerCallback()
     repaint();
 }
 
+void LevelMetersPanel::drawMeterHalf (juce::Graphics& g, juce::Rectangle<int> bar,
+                                      juce::Colour colour, float db, bool active)
+{
+    if (! active)
+        return;
+
+    const float clamped = juce::jlimit (-60.0f, 0.0f, db);
+    const float ratio   = (clamped + 60.0f) / 60.0f;
+    auto fill = bar.withWidth (juce::roundToInt ((float) bar.getWidth() * ratio));
+
+    // base -> white linear gradient, anchored across the full bar width so
+    // the colour at any horizontal position is consistent regardless of how
+    // far the fill currently extends. The midpoint is a brightened version
+    // of the base colour - this preserves the channel's identity in the
+    // bulk of the range and reads "hot / clipping" as it fades to white.
+    juce::ColourGradient gradient (
+        colour,
+        (float) bar.getX(),     (float) bar.getCentreY(),
+        juce::Colours::white,
+        (float) bar.getRight(), (float) bar.getCentreY(),
+        false);
+    gradient.addColour (0.70, colour.brighter (0.4f));
+
+    g.setGradientFill (gradient);
+    g.fillRect (fill);
+}
+
 void LevelMetersPanel::drawMeter (juce::Graphics& g, juce::Rectangle<int> row,
-                                  const juce::String& label, juce::Colour labelColour,
-                                  float db, bool active)
+                                  const juce::String& label,
+                                  juce::Colour lColour, juce::Colour rColour,
+                                  float lDb, float rDb,
+                                  bool lActive, bool rActive)
 {
     auto labelArea = row.removeFromLeft (sx (110));
-    g.setColour (active ? labelColour : WTColors::dim (labelColour, 0.45f));
+    const bool anyActive = lActive || rActive;
+    g.setColour (anyActive ? lColour : WTColors::dim (lColour, 0.45f));
     g.setFont (juce::FontOptions (sf (14.0f)));
     g.drawText (label, labelArea, juce::Justification::centredLeft);
+
+    // Gutter between the channel label and the bar - holds the L/R glyphs
+    // that identify which half of the bar is which channel.
+    auto indicatorCol = row.removeFromLeft (sx (14));
 
     auto meter = row.reduced (sx (4), sx (6));
     g.setColour (juce::Colour (0xff111213));
     g.fillRect (meter);
 
-    if (active)
-    {
-        const float clamped = juce::jlimit (-60.0f, 0.0f, db);
-        const float ratio   = (clamped + 60.0f) / 60.0f;
-        auto fill = meter.withWidth (juce::roundToInt ((float) meter.getWidth() * ratio));
+    // Split the bar in half vertically. L sits on top, R on the bottom.
+    const int halfHeight = meter.getHeight() / 2;
+    auto lBar = meter.withHeight (halfHeight);
+    auto rBar = meter.withTrimmedTop (halfHeight);
 
-        // Gradient anchored to the full meter width so the colour at any
-        // level is the same regardless of how far the fill currently extends.
-        // Green for the bulk of the range, transitioning through yellow to
-        // orange to red near 0 dBFS.
-        juce::ColourGradient gradient (
-            juce::Colour (0xff5cc26b),
-            (float) meter.getX(),     (float) meter.getCentreY(),
-            juce::Colour (0xffd83838),
-            (float) meter.getRight(), (float) meter.getCentreY(),
-            false);
-        gradient.addColour (0.55, juce::Colour (0xff5cc26b));   // green plateau to ~-27 dB
-        gradient.addColour (0.75, juce::Colour (0xfff5c842));   // yellow around -15 dB
-        gradient.addColour (0.88, juce::Colour (0xffe6731c));   // orange around -7 dB
+    drawMeterHalf (g, lBar, lColour, lDb, lActive);
+    drawMeterHalf (g, rBar, rColour, rDb, rActive);
 
-        g.setGradientFill (gradient);
-        g.fillRect (fill);
-    }
+    // L / R indicator glyphs vertically centred on their respective halves.
+    g.setFont (juce::FontOptions (sf (10.0f)));
+    g.setColour (lActive ? lColour : WTColors::dim (lColour, 0.45f));
+    g.drawText ("L",
+                juce::Rectangle<int> (indicatorCol.getX(), lBar.getY(),
+                                      indicatorCol.getWidth(), lBar.getHeight()),
+                juce::Justification::centred);
+    g.setColour (rActive ? rColour : WTColors::dim (rColour, 0.45f));
+    g.drawText ("R",
+                juce::Rectangle<int> (indicatorCol.getX(), rBar.getY(),
+                                      indicatorCol.getWidth(), rBar.getHeight()),
+                juce::Justification::centred);
 
+    // Numeric readouts, one per half, right-aligned inside each sub-bar.
     g.setColour (juce::Colours::whitesmoke);
-    g.setFont (juce::FontOptions (sf (12.0f)));
-    g.drawText (active ? juce::String (db, 1) + " dB" : juce::String ("(not routed)"),
-                meter.reduced (sx (6), 0),
-                juce::Justification::centredRight);
+    g.setFont (juce::FontOptions (sf (10.0f)));
+    if (anyActive)
+    {
+        g.drawText (juce::String (lDb, 1) + " dB",
+                    lBar.reduced (sx (6), 0),
+                    juce::Justification::centredRight);
+        g.drawText (juce::String (rDb, 1) + " dB",
+                    rBar.reduced (sx (6), 0),
+                    juce::Justification::centredRight);
+    }
+    else
+    {
+        g.drawText ("(not routed)",
+                    meter.reduced (sx (6), 0),
+                    juce::Justification::centredRight);
+    }
 }
 
 void LevelMetersPanel::drawLevelScale (juce::Graphics& g, juce::Rectangle<int> row)
 {
-    // Align horizontally to the meter bars: skip the 110 px label area on
-    // the left, then match the 4 px reduce that drawMeter() applies.
+    // Align horizontally to the meter bars: skip the 110 px label area and
+    // the 14 px L/R indicator gutter on the left, then match the 4 px
+    // reduce that drawMeter() applies.
     auto strip = row;
-    strip.removeFromLeft (sx (110));
+    strip.removeFromLeft (sx (110) + sx (14));
     strip = strip.reduced (sx (4), 0);
 
     // 12 dB increments to match the spectrum display's vertical labels.
@@ -143,17 +188,28 @@ void LevelMetersPanel::paint (juce::Graphics& g)
     // every block; we just decide which one to display.
     const bool useRms = *processor.apvts.getRawParameterValue ("meterUseRms") > 0.5f;
 
-    const float postDb = useRms ? processor.postEffectLevelDb.load (std::memory_order_relaxed)
-                                 : processor.postEffectPeakDb .load (std::memory_order_relaxed);
-    const float preDb  = useRms ? processor.preEffectLevelDb .load (std::memory_order_relaxed)
-                                 : processor.preEffectPeakDb  .load (std::memory_order_relaxed);
+    const float postLDb = useRms ? processor.postEffectLevelDb  .load (std::memory_order_relaxed)
+                                 : processor.postEffectPeakDb   .load (std::memory_order_relaxed);
+    const float postRDb = useRms ? processor.postEffectLevelDb_R.load (std::memory_order_relaxed)
+                                 : processor.postEffectPeakDb_R .load (std::memory_order_relaxed);
+    const float preLDb  = useRms ? processor.preEffectLevelDb   .load (std::memory_order_relaxed)
+                                 : processor.preEffectPeakDb    .load (std::memory_order_relaxed);
+    const float preRDb  = useRms ? processor.preEffectLevelDb_R .load (std::memory_order_relaxed)
+                                 : processor.preEffectPeakDb_R  .load (std::memory_order_relaxed);
 
-    drawMeter (g, postRow, "Post-Effect", WTColors::postEffect, postDb, true);
+    const bool preActive = processor.preBusActive.load (std::memory_order_relaxed);
+
+    drawMeter (g, postRow, "Post-Effect",
+               WTColors::postEffect, WTColors::postEffect_R,
+               postLDb, postRDb,
+               true, true);
 
     drawLevelScale (g, scaleRow);
 
-    drawMeter (g, preRow, "Pre-Effect", WTColors::preEffect, preDb,
-               processor.preBusActive.load (std::memory_order_relaxed));
+    drawMeter (g, preRow, "Pre-Effect",
+               WTColors::preEffect, WTColors::preEffect_R,
+               preLDb, preRDb,
+               preActive, preActive);
 }
 
 void LevelMetersPanel::resized()

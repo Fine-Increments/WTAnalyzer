@@ -52,6 +52,8 @@ public:
     // window holdoff, not the threshold itself.
     static constexpr float kTriggerThresholdLinear = 0.01f;
 
+    enum class Channel { L, R };
+
     void prepare (double sampleRate, int samplesPerBlock);
     void reset();
 
@@ -61,50 +63,59 @@ public:
     void setAverageGoal (int count);
 
     // Audio-thread entry. Called per-sample with the pre and post values
-    // at this sample index. preSample is used for trigger detection;
-    // postSample is what we capture.
-    void processSample (float preSample, float postSample);
+    // at this sample index for each channel. Pre is used for trigger
+    // detection; post is what gets captured.
+    void processSample (float preL, float postL, float preR, float postR);
 
-    // UI-thread accessors. The buffer is the running average of all
-    // completed captures since the last reset(); displayLength is how
-    // many samples of it are valid for the current window setting.
-    const std::vector<float>& getAveragedBuffer() const noexcept { return averaged; }
-    int   getDisplayLength()       const noexcept { return displayLengthAtomic.load (std::memory_order_relaxed); }
-    int   getCompletedCaptures()   const noexcept { return completedCaptures.load (std::memory_order_relaxed); }
+    // UI-thread accessors. Each channel exposes its own averaged buffer
+    // and capture stats. The unsuffixed names return the L channel for
+    // backwards compatibility with pre-stereo callers.
+    const std::vector<float>& getAveragedBuffer (Channel ch = Channel::L) const noexcept
+    {
+        return ch == Channel::L ? chL.averaged : chR.averaged;
+    }
+    int   getDisplayLength     (Channel ch = Channel::L) const noexcept
+    {
+        return (ch == Channel::L ? chL : chR).displayLengthAtomic.load (std::memory_order_relaxed);
+    }
+    int   getCompletedCaptures (Channel ch = Channel::L) const noexcept
+    {
+        return (ch == Channel::L ? chL : chR).completedCaptures.load (std::memory_order_relaxed);
+    }
     int   getAverageGoal()         const noexcept { return averageGoal.load (std::memory_order_relaxed); }
     float getSampleRate()          const noexcept { return sampleRate; }
 
-    // True iff at least one capture has completed since the last reset.
-    bool  hasAnyCapture() const noexcept { return getCompletedCaptures() > 0; }
+    // True iff at least one capture on the indicated channel has
+    // completed since the last reset.
+    bool  hasAnyCapture (Channel ch = Channel::L) const noexcept
+    {
+        return getCompletedCaptures (ch) > 0;
+    }
 
 private:
     enum class State { Idle, Capturing };
 
+    struct ChannelState
+    {
+        std::vector<float> capture;
+        std::vector<float> averaged;
+        State state = State::Idle;
+        int   captureIdx = 0;
+        int   sinceLastCompletion = 0;
+        std::atomic<int> displayLengthAtomic { 0 };
+        std::atomic<int> completedCaptures   { 0 };
+    };
+
     float sampleRate = 48000.0f;
     int   maxWindowSamples = 0;
 
-    // Triple of buffers:
-    //   capture - the current in-flight capture (written sample by sample)
-    //   averaged - running sum / completedCaptures of all completed captures
-    //              (this is what the UI reads)
-    //   scratch  - holds the just-completed capture while it's being added
-    //              into 'averaged'; lets the audio thread keep capturing
-    //              the next impulse without stomping on the running average
-    //              read by the UI. (Not strictly needed since the merge is
-    //              a tight loop, but it makes the lifetimes obvious.)
-    std::vector<float> capture;
-    std::vector<float> averaged;
+    ChannelState chL;
+    ChannelState chR;
 
-    State state = State::Idle;
-    int   captureIdx = 0;
+    std::atomic<int> windowSamples { 0 };
+    std::atomic<int> averageGoal   { kDefaultAverages };
 
-    std::atomic<int> windowSamples       { 0 };
-    std::atomic<int> displayLengthAtomic { 0 };
-    std::atomic<int> averageGoal         { kDefaultAverages };
-    std::atomic<int> completedCaptures   { 0 };
-
-    // Wall-clock since the last completed capture, in samples. Used as a
-    // soft re-trigger holdoff so that a long resonant tail in pre doesn't
-    // immediately re-arm before the capture really finishes.
-    int sinceLastCompletion = 0;
+    void resetChannel  (ChannelState& ch);
+    void invalidateChannel (ChannelState& ch);
+    void processChannel (ChannelState& ch, float preSample, float postSample, int winSamps);
 };

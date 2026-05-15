@@ -17,52 +17,70 @@ void ImpulseResponse::prepare (double sr, int /*samplesPerBlock*/)
     sampleRate       = (float) sr;
     maxWindowSamples = (int) std::ceil (kMaxWindowMs * 0.001 * sr);
 
-    capture .assign ((size_t) maxWindowSamples, 0.0f);
-    averaged.assign ((size_t) maxWindowSamples, 0.0f);
+    chL.capture .assign ((size_t) maxWindowSamples, 0.0f);
+    chL.averaged.assign ((size_t) maxWindowSamples, 0.0f);
+    chR.capture .assign ((size_t) maxWindowSamples, 0.0f);
+    chR.averaged.assign ((size_t) maxWindowSamples, 0.0f);
 
-    // Default window: kDefaultWindowMs, converted to samples at the
-    // current rate. Stored atomically so setWindowMs() can update it
-    // later without re-allocating the buffers.
     const int defaultSamples = (int) std::ceil (kDefaultWindowMs * 0.001 * sr);
-    windowSamples      .store (std::min (defaultSamples, maxWindowSamples), std::memory_order_relaxed);
-    displayLengthAtomic.store (0, std::memory_order_relaxed);
-    completedCaptures  .store (0, std::memory_order_relaxed);
+    windowSamples.store (std::min (defaultSamples, maxWindowSamples), std::memory_order_relaxed);
 
     reset();
 }
 
+void ImpulseResponse::resetChannel (ChannelState& ch)
+{
+    ch.state               = State::Idle;
+    ch.captureIdx          = 0;
+    // Large initial value so the very first trigger after reset can fire
+    // immediately; the holdoff only meaningfully applies AFTER a completed
+    // capture (kept smaller than INT_MAX so the increment can't overflow).
+    ch.sinceLastCompletion = std::numeric_limits<int>::max() / 2;
+
+    ch.completedCaptures  .store (0, std::memory_order_relaxed);
+    ch.displayLengthAtomic.store (0, std::memory_order_relaxed);
+
+    std::fill (ch.capture .begin(), ch.capture .end(), 0.0f);
+    std::fill (ch.averaged.begin(), ch.averaged.end(), 0.0f);
+}
+
+void ImpulseResponse::invalidateChannel (ChannelState& ch)
+{
+    ch.state               = State::Idle;
+    ch.captureIdx          = 0;
+    ch.sinceLastCompletion = std::numeric_limits<int>::max() / 2;
+    ch.completedCaptures  .store (0, std::memory_order_relaxed);
+    ch.displayLengthAtomic.store (0, std::memory_order_relaxed);
+    std::fill (ch.averaged.begin(), ch.averaged.end(), 0.0f);
+}
+
 void ImpulseResponse::reset()
 {
-    state               = State::Idle;
-    captureIdx          = 0;
-    // Initialise to a large value so the very first trigger after reset
-    // can fire immediately; the holdoff only meaningfully applies AFTER
-    // a completed capture (kept smaller than INT_MAX so the increment
-    // in processSample can't overflow).
-    sinceLastCompletion = std::numeric_limits<int>::max() / 2;
-
-    completedCaptures  .store (0, std::memory_order_relaxed);
-    displayLengthAtomic.store (0, std::memory_order_relaxed);
-
-    std::fill (capture .begin(), capture .end(), 0.0f);
-    std::fill (averaged.begin(), averaged.end(), 0.0f);
+    resetChannel (chL);
+    resetChannel (chR);
 }
 
 void ImpulseResponse::setWindowMs (int ms)
 {
     const int clamped = std::clamp (ms, kMinWindowMs, kMaxWindowMs);
     const int samples = (int) std::ceil (clamped * 0.001 * sampleRate);
-    windowSamples.store (std::min (samples, maxWindowSamples), std::memory_order_relaxed);
+    const int newWin  = std::min (samples, maxWindowSamples);
 
-    // Changing the window invalidates the in-progress average - lengths
-    // wouldn't match. Reset the running average without touching the
-    // already-allocated buffers.
-    state               = State::Idle;
-    captureIdx          = 0;
-    sinceLastCompletion = std::numeric_limits<int>::max() / 2;
-    completedCaptures  .store (0, std::memory_order_relaxed);
-    displayLengthAtomic.store (0, std::memory_order_relaxed);
-    std::fill (averaged.begin(), averaged.end(), 0.0f);
+    // CRITICAL: skip the reset path entirely when nothing changed. This
+    // function gets polled every processBlock so an unconditional reset
+    // would re-zero both per-channel averaged buffers (~23 MB each at
+    // 48 kHz / 120 s) hundreds of times per second and burn the audio
+    // thread.
+    if (newWin == windowSamples.load (std::memory_order_relaxed))
+        return;
+
+    windowSamples.store (newWin, std::memory_order_relaxed);
+
+    // Window actually changed - invalidate the in-progress average for both
+    // channels since its length no longer matches. Buffers stay allocated;
+    // only the contents are wiped.
+    invalidateChannel (chL);
+    invalidateChannel (chR);
 }
 
 void ImpulseResponse::setAverageGoal (int count)
@@ -71,61 +89,57 @@ void ImpulseResponse::setAverageGoal (int count)
                        std::memory_order_relaxed);
 }
 
-void ImpulseResponse::processSample (float preSample, float postSample)
+void ImpulseResponse::processSample (float preL, float postL, float preR, float postR)
 {
     const int winSamps = windowSamples.load (std::memory_order_relaxed);
     if (winSamps <= 0) return;
 
-    if (sinceLastCompletion < winSamps)
-        ++sinceLastCompletion;
+    processChannel (chL, preL, postL, winSamps);
+    processChannel (chR, preR, postR, winSamps);
+}
 
-    if (state == State::Idle)
+void ImpulseResponse::processChannel (ChannelState& ch,
+                                      float preSample, float postSample,
+                                      int winSamps)
+{
+    if (ch.sinceLastCompletion < winSamps)
+        ++ch.sinceLastCompletion;
+
+    if (ch.state == State::Idle)
     {
-        // Stop accepting triggers once we've reached the user's averaging
-        // goal. The display keeps showing the held average until reset()
-        // is called.
-        if (completedCaptures.load (std::memory_order_relaxed)
+        if (ch.completedCaptures.load (std::memory_order_relaxed)
             >= averageGoal.load (std::memory_order_relaxed))
             return;
 
-        // Edge trigger: pre crosses above threshold while idle. We also
-        // require sinceLastCompletion to have caught up to at least the
-        // window length, which prevents back-to-back triggers on a tone
-        // that happens to be above threshold continuously.
         if (std::abs (preSample) > kTriggerThresholdLinear
-            && sinceLastCompletion >= winSamps)
+            && ch.sinceLastCompletion >= winSamps)
         {
-            state      = State::Capturing;
-            capture[0] = postSample;
-            captureIdx = 1;
+            ch.state         = State::Capturing;
+            ch.capture[0]    = postSample;
+            ch.captureIdx    = 1;
         }
         return;
     }
 
     // State::Capturing
-    capture[(size_t) captureIdx] = postSample;
-    ++captureIdx;
+    ch.capture[(size_t) ch.captureIdx] = postSample;
+    ++ch.captureIdx;
 
-    if (captureIdx >= winSamps)
+    if (ch.captureIdx >= winSamps)
     {
-        // Capture complete. Fold into running average.
-        const int already = completedCaptures.load (std::memory_order_relaxed);
+        // Capture complete. Fold into running average using the stable
+        // incremental mean: avg' = avg + (capture - avg) / next.
+        const int already = ch.completedCaptures.load (std::memory_order_relaxed);
         const int next    = already + 1;
-
-        // Incremental mean: avg' = avg + (capture - avg) / next.
-        // Numerically stable and bounded for any number of captures.
         const float invNext = 1.0f / (float) next;
         for (int i = 0; i < winSamps; ++i)
-            averaged[(size_t) i] += (capture[(size_t) i] - averaged[(size_t) i]) * invNext;
+            ch.averaged[(size_t) i] += (ch.capture[(size_t) i] - ch.averaged[(size_t) i]) * invNext;
 
-        completedCaptures  .store (next, std::memory_order_release);
-        displayLengthAtomic.store (winSamps, std::memory_order_release);
+        ch.completedCaptures  .store (next,     std::memory_order_release);
+        ch.displayLengthAtomic.store (winSamps, std::memory_order_release);
 
-        state               = State::Idle;
-        captureIdx          = 0;
-        sinceLastCompletion = 0;
-        // The Idle-branch checks averageGoal vs completedCaptures, so
-        // hitting the goal naturally stops further triggers from
-        // arming. The user calls reset() (Clear button) to start over.
+        ch.state               = State::Idle;
+        ch.captureIdx          = 0;
+        ch.sinceLastCompletion = 0;
     }
 }

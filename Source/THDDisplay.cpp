@@ -127,15 +127,15 @@ THDMeasurement::Source THDDisplay::currentViewSource() const noexcept
     }
 }
 
-juce::Colour THDDisplay::currentViewColour() const noexcept
+THDDisplay::ViewColours THDDisplay::currentViewColours() const noexcept
 {
     switch (currentViewSource())
     {
-        case THDMeasurement::Source::Pre:  return WTColors::preEffect;
-        case THDMeasurement::Source::Post: return WTColors::postEffect;
-        case THDMeasurement::Source::Diff: return WTColors::analysis;
+        case THDMeasurement::Source::Pre:  return { WTColors::preEffect,  WTColors::preEffect_R  };
+        case THDMeasurement::Source::Post: return { WTColors::postEffect, WTColors::postEffect_R };
+        case THDMeasurement::Source::Diff: return { WTColors::analysis,   WTColors::analysis_R   };
     }
-    return WTColors::analysis;
+    return { WTColors::analysis, WTColors::analysis_R };
 }
 
 THDDisplay::DisplayFrame THDDisplay::sampleProcessor() const
@@ -143,31 +143,37 @@ THDDisplay::DisplayFrame THDDisplay::sampleProcessor() const
     DisplayFrame f;
 
     const auto& thd = processor.thdMeasurement;
-    f.valid = thd.isValid();
 
-    // Always seed all cells with kNoMeasurementDb so callers don't need a
-    // "valid" probe per cell.
-    for (auto& srcArr : f.ratioDb)
-        std::fill (srcArr.begin(), srcArr.end(), THDMeasurement::kNoMeasurementDb);
+    auto fillFromChannel = [&] (ChannelFrame& cf, THDMeasurement::Channel chSel)
+    {
+        // Seed every cell with kNoMeasurementDb so callers don't need a
+        // per-cell "valid" probe.
+        for (auto& srcArr : cf.ratioDb)
+            std::fill (srcArr.begin(), srcArr.end(), THDMeasurement::kNoMeasurementDb);
 
-    if (! f.valid) return f;
+        cf.valid = thd.isValid (chSel);
+        if (! cf.valid) return;
 
-    f.thdPercent        = thd.getTotalThdPercent();
-    f.fundamentalHz     = thd.getFundamentalHz();
-    f.preFundamentalDb  = thd.getPreFundamentalDb();
-    f.postFundamentalDb = thd.getPostFundamentalDb();
-    f.numValidHarmonics = thd.getNumValidHarmonics();
+        cf.thdPercent        = thd.getTotalThdPercent   (chSel);
+        cf.fundamentalHz     = thd.getFundamentalHz     (chSel);
+        cf.preFundamentalDb  = thd.getPreFundamentalDb  (chSel);
+        cf.postFundamentalDb = thd.getPostFundamentalDb (chSel);
+        cf.numValidHarmonics = thd.getNumValidHarmonics (chSel);
 
-    static constexpr THDMeasurement::Source kSources[3] = {
-        THDMeasurement::Source::Diff,
-        THDMeasurement::Source::Pre,
-        THDMeasurement::Source::Post
+        static constexpr THDMeasurement::Source kSources[3] = {
+            THDMeasurement::Source::Diff,
+            THDMeasurement::Source::Pre,
+            THDMeasurement::Source::Post
+        };
+
+        for (int s = 0; s < 3; ++s)
+            for (int h = 1; h <= THDMeasurement::kMaxHarmonics; ++h)
+                cf.ratioDb[(size_t) s][(size_t) (h - 1)]
+                    = thd.getHarmonicRatioDb (kSources[s], h, chSel);
     };
 
-    for (int s = 0; s < 3; ++s)
-        for (int h = 1; h <= THDMeasurement::kMaxHarmonics; ++h)
-            f.ratioDb[(size_t) s][(size_t) (h - 1)]
-                = thd.getHarmonicRatioDb (kSources[s], h);
+    fillFromChannel (f.L, THDMeasurement::Channel::L);
+    fillFromChannel (f.R, THDMeasurement::Channel::R);
 
     return f;
 }
@@ -184,15 +190,17 @@ void THDDisplay::timerCallback()
 
     DisplayFrame current = sampleProcessor();
 
-    if (isHolding && displayed.valid && current.valid)
+    auto holdChannel = [] (ChannelFrame& held, const ChannelFrame& cur)
     {
-        // Peak-hold per harmonic per source. Live reference values
-        // (fundamental Hz / dB) track current so the readout stays accurate
-        // even while bars hold their peaks.
-        for (size_t s = 0; s < displayed.ratioDb.size(); ++s)
+        if (! (held.valid && cur.valid))
         {
-            auto& heldArr = displayed.ratioDb[s];
-            const auto& curArr = current.ratioDb[s];
+            held = cur;
+            return;
+        }
+        for (size_t s = 0; s < held.ratioDb.size(); ++s)
+        {
+            auto& heldArr = held.ratioDb[s];
+            const auto& curArr = cur.ratioDb[s];
             for (size_t h = 0; h < heldArr.size(); ++h)
             {
                 const float curVal = curArr[h];
@@ -202,12 +210,17 @@ void THDDisplay::timerCallback()
                                 : std::max (heldArr[h], curVal);
             }
         }
+        held.thdPercent        = std::max (held.thdPercent, cur.thdPercent);
+        held.numValidHarmonics = std::max (held.numValidHarmonics, cur.numValidHarmonics);
+        held.fundamentalHz     = cur.fundamentalHz;
+        held.preFundamentalDb  = cur.preFundamentalDb;
+        held.postFundamentalDb = cur.postFundamentalDb;
+    };
 
-        displayed.thdPercent        = std::max (displayed.thdPercent, current.thdPercent);
-        displayed.numValidHarmonics = std::max (displayed.numValidHarmonics, current.numValidHarmonics);
-        displayed.fundamentalHz     = current.fundamentalHz;
-        displayed.preFundamentalDb  = current.preFundamentalDb;
-        displayed.postFundamentalDb = current.postFundamentalDb;
+    if (isHolding)
+    {
+        holdChannel (displayed.L, current.L);
+        holdChannel (displayed.R, current.R);
     }
     else
     {
@@ -263,7 +276,7 @@ void THDDisplay::paint (juce::Graphics& g)
     g.setColour (juce::Colour (0xff111213));
     g.fillRect (bounds);
 
-    if (! displayed.valid)
+    if (! displayed.anyValid())
     {
         g.setColour (juce::Colours::grey);
         g.setFont (juce::FontOptions (sf (14.0f)));
@@ -280,24 +293,41 @@ void THDDisplay::paint (juce::Graphics& g)
     auto topL = topRow.removeFromLeft (topRow.getWidth() / 2);
     auto topR = topRow;
 
-    // ---- THD% (always differential) -----------------------------------------
-    const float thdPct = displayed.thdPercent;
-    juce::String thdText;
-    if (thdPct < 0.01f)         thdText = juce::String (thdPct, 4) + "%";
-    else if (thdPct < 1.0f)     thdText = juce::String (thdPct, 3) + "%";
-    else if (thdPct < 100.0f)   thdText = juce::String (thdPct, 2) + "%";
-    else                        thdText = juce::String (thdPct, 1) + "%";
+    auto formatPct = [] (float p) -> juce::String
+    {
+        if (p < 0.01f)        return juce::String (p, 4) + "%";
+        if (p < 1.0f)         return juce::String (p, 3) + "%";
+        if (p < 100.0f)       return juce::String (p, 2) + "%";
+        return                       juce::String (p, 1) + "%";
+    };
 
-    g.setColour (WTColors::analysis);
-    g.setFont (juce::FontOptions (sf (30.0f)));
-    g.drawText (thdText + " THD", topL, juce::Justification::centred, false);
+    // ---- THD% header (per-channel readouts, always differential) ------------
+    // Stacks L on top and R below. Each line uses its own master/variant
+    // colour so the channel identity is unambiguous.
+    auto topLTop = topL.withHeight (topL.getHeight() / 2);
+    auto topLBot = topL.withTrimmedTop (topL.getHeight() / 2);
+
+    g.setFont (juce::FontOptions (sf (18.0f)));
+    if (displayed.L.valid)
+    {
+        g.setColour (WTColors::analysis);
+        g.drawText (formatPct (displayed.L.thdPercent) + " L  THD",
+                    topLTop, juce::Justification::centred, false);
+    }
+    if (displayed.R.valid)
+    {
+        g.setColour (WTColors::analysis_R);
+        g.drawText (formatPct (displayed.R.thdPercent) + " R  THD",
+                    topLBot, juce::Justification::centred, false);
+    }
 
     // ---- Fundamental subline ------------------------------------------------
-    const float f0     = displayed.fundamentalHz;
+    const auto& primary = displayed.L.valid ? displayed.L : displayed.R;
+    const float f0     = primary.fundamentalHz;
     const auto  src    = currentViewSource();
     const float fundDb = (src == THDMeasurement::Source::Post)
-                            ? displayed.postFundamentalDb
-                            : displayed.preFundamentalDb;
+                            ? primary.postFundamentalDb
+                            : primary.preFundamentalDb;
 
     juce::String freqStr;
     if      (f0 < 1000.0f)   freqStr = juce::String ((int) std::round (f0)) + " Hz";
@@ -315,18 +345,25 @@ void THDDisplay::paint (juce::Graphics& g)
 
 void THDDisplay::drawHarmonicBars (juce::Graphics& g, juce::Rectangle<int> area)
 {
-    const auto  src       = currentViewSource();
-    const auto  barColour = currentViewColour();
-    const int   srcIdx    = sourceIndex (src);
-    const auto& ratios    = displayed.ratioDb[(size_t) srcIdx];
+    const auto  src    = currentViewSource();
+    const auto  cols   = currentViewColours();
+    const int   srcIdx = sourceIndex (src);
 
-    // Y axis: dB ratio relative to the fundamental. h1 sits at 0 dB at the
-    // top, harmonics extend down by their attenuation. The Diff view uses
-    // the same axis since added energy is also expressed as a dB ratio to
-    // pre's fundamental.
-    constexpr float kMaxDb =   0.0f;
-    constexpr float kMinDb = -100.0f;
-    const float     dbRange = kMaxDb - kMinDb;
+    const bool showL    = *processor.apvts.getRawParameterValue ("showChannelL")    > 0.5f;
+    const bool showR    = *processor.apvts.getRawParameterValue ("showChannelR")    > 0.5f;
+    const bool showDiff = *processor.apvts.getRawParameterValue ("showChannelDiff") > 0.5f;
+    const bool diffMode = showDiff;
+
+    // Y axis range. In L/R view: normal dB ratio scale (0 at top, harmonics
+    // extend down). In Diff view: bipolar centred at zero so the R - L
+    // difference can grow up (R louder) or down (L louder).
+    constexpr float kMaxDb     =   0.0f;
+    constexpr float kMinDb     = -100.0f;
+    constexpr float kDiffMaxDb = +30.0f;
+    constexpr float kDiffMinDb = -30.0f;
+    const float     axisMaxDb  = diffMode ? kDiffMaxDb : kMaxDb;
+    const float     axisMinDb  = diffMode ? kDiffMinDb : kMinDb;
+    const float     dbRange    = axisMaxDb - axisMinDb;
 
     auto plotArea = area;
     auto labelGutterLeft   = plotArea.removeFromLeft (sx (32));
@@ -335,49 +372,139 @@ void THDDisplay::drawHarmonicBars (juce::Graphics& g, juce::Rectangle<int> area)
     g.setColour (juce::Colour (0xff181a1d));
     g.fillRect (plotArea);
 
-    g.setColour (juce::Colour (0xff2a2d32));
-    const std::array<float, 5> kDbGrid { 0.0f, -20.0f, -40.0f, -60.0f, -80.0f };
-    for (float db : kDbGrid)
+    // Gridlines / Y-axis labels. In normal view: dB-down-from-zero scale
+    // (0, -20, -40, ...). In Diff view: bipolar (-30, -15, 0, +15, +30).
+    auto yForDb = [&] (float db) -> int
     {
-        const float t = (db - kMinDb) / dbRange;
-        const int   y = plotArea.getY() + juce::roundToInt ((1.0f - t) * (float) plotArea.getHeight());
+        const float t = (db - axisMinDb) / dbRange;
+        return plotArea.getY() + juce::roundToInt ((1.0f - t) * (float) plotArea.getHeight());
+    };
+
+    g.setColour (juce::Colour (0xff2a2d32));
+    const std::array<float, 5> kDbGridNormal { 0.0f, -20.0f, -40.0f, -60.0f, -80.0f };
+    const std::array<float, 5> kDbGridDiff   { -30.0f, -15.0f, 0.0f, 15.0f, 30.0f };
+    const auto& dbGrid = diffMode ? kDbGridDiff : kDbGridNormal;
+    for (float db : dbGrid)
+    {
+        const int y = yForDb (db);
         g.drawLine ((float) plotArea.getX(), (float) y, (float) plotArea.getRight(), (float) y, sf (1.0f));
     }
 
     g.setColour (juce::Colours::grey);
     g.setFont (juce::FontOptions (sf (10.0f)));
-    for (float db : kDbGrid)
+    for (float db : dbGrid)
     {
-        const float t = (db - kMinDb) / dbRange;
-        const int   y = plotArea.getY() + juce::roundToInt ((1.0f - t) * (float) plotArea.getHeight());
-
-        const int textHeight = sx (12);
-        const juce::String text = (db == 0.0f) ? juce::String ("0") : juce::String ((int) db);
+        const int   y          = yForDb (db);
+        const int   textHeight = sx (12);
+        juce::String text;
+        if (db == 0.0f)        text = "0";
+        else if (db > 0.0f)    text = "+" + juce::String ((int) db);
+        else                   text = juce::String ((int) db);
         juce::Rectangle<int> r (labelGutterLeft.getX(), y - textHeight / 2,
                                 labelGutterLeft.getWidth() - sx (4), textHeight);
         g.drawText (text, r, juce::Justification::centredRight, false);
     }
 
-    const int numBars = juce::jmin (displayed.numValidHarmonics,
-                                    THDMeasurement::kMaxHarmonics);
+    const int numBars = juce::jmax (
+        juce::jmin (displayed.L.numValidHarmonics, THDMeasurement::kMaxHarmonics),
+        juce::jmin (displayed.R.numValidHarmonics, THDMeasurement::kMaxHarmonics));
     if (numBars <= 0) return;
 
     const float availableWidth = (float) plotArea.getWidth();
     const float slotWidth      = availableWidth / (float) numBars;
-    const int   barInset       = sx (6);
+    const int   slotInset      = sx (4);
     const int   dbLabelHeight  = sx (12);
+
+    // ------------------------------------------------------------------
+    // Diff view: one bipolar bar per harmonic, centred on the zero line.
+    // Bar grows up from zero (R-variant colour) when R is louder, or down
+    // (L-master colour) when L is louder. Both pre and post values drive
+    // their own Diff if the view source is Pre or Post; the Diff source
+    // is itself a R - L difference of added energy, so we just plot it.
+    // ------------------------------------------------------------------
+    if (diffMode)
+    {
+        const int zeroY = yForDb (0.0f);
+
+        auto diffValueFor = [&] (int harmonicIdx) -> float
+        {
+            const float l = displayed.L.ratioDb[(size_t) srcIdx][(size_t) harmonicIdx];
+            const float r = displayed.R.ratioDb[(size_t) srcIdx][(size_t) harmonicIdx];
+            if (l <= THDMeasurement::kNoMeasurementDb + 1.0f
+             || r <= THDMeasurement::kNoMeasurementDb + 1.0f)
+                return THDMeasurement::kNoMeasurementDb;
+            return r - l;
+        };
+
+        for (int i = 0; i < numBars; ++i)
+        {
+            const int harmonicNum = i + 1;
+            const int slotLeft  = plotArea.getX() + juce::roundToInt (i * slotWidth);
+            const int slotRight = plotArea.getX() + juce::roundToInt ((i + 1) * slotWidth);
+
+            g.setColour (juce::Colours::grey);
+            g.setFont (juce::FontOptions (sf (10.0f)));
+            juce::Rectangle<int> nameRect (slotLeft, labelGutterBottom.getY(),
+                                           slotRight - slotLeft, labelGutterBottom.getHeight());
+            g.drawText ("h" + juce::String (harmonicNum), nameRect,
+                        juce::Justification::centredTop, false);
+
+            const float v = diffValueFor (i);
+            if (v <= THDMeasurement::kNoMeasurementDb + 1.0f) continue;
+
+            const float vClamped = juce::jlimit (axisMinDb, axisMaxDb, v);
+            const int   vY       = yForDb (vClamped);
+
+            const int barLeft  = slotLeft  + slotInset;
+            const int barRight = slotRight - slotInset;
+            const int barTop   = juce::jmin (zeroY, vY);
+            const int barBot   = juce::jmax (zeroY, vY);
+
+            g.setColour (v >= 0.0f ? cols.R : cols.L);
+            g.fillRect (juce::Rectangle<int> (barLeft, barTop,
+                                              juce::jmax (1, barRight - barLeft),
+                                              juce::jmax (1, barBot - barTop)));
+
+            // dB readout above the bar tip (or below if bar grows downward).
+            const int labelY = (v >= 0.0f)
+                ? juce::jmax (plotArea.getY() + sx (1), vY - dbLabelHeight - sx (1))
+                : juce::jmin (plotArea.getBottom() - dbLabelHeight, vY + sx (1));
+            juce::Rectangle<int> dbRect (slotLeft, labelY,
+                                         slotRight - slotLeft, dbLabelHeight);
+            g.setColour (juce::Colours::whitesmoke);
+            g.drawText ((v >= 0.0f ? "+" : "") + juce::String (v, 1), dbRect,
+                        juce::Justification::centred, false);
+        }
+        return;
+    }
+
+    // ------------------------------------------------------------------
+    // Normal L / R view: paired sub-bars per harmonic.
+    // ------------------------------------------------------------------
+    struct SubBar { char tag; juce::Colour colour; };
+    juce::Array<SubBar> visible;
+    if (showL) visible.add ({ 'L', cols.L });
+    if (showR) visible.add ({ 'R', cols.R });
+    if (visible.isEmpty()) return;
+
+    auto valueFor = [&] (char tag, int harmonicIdx) -> float
+    {
+        const float l = displayed.L.ratioDb[(size_t) srcIdx][(size_t) harmonicIdx];
+        const float r = displayed.R.ratioDb[(size_t) srcIdx][(size_t) harmonicIdx];
+        switch (tag)
+        {
+            case 'L': return l;
+            case 'R': return r;
+        }
+        return THDMeasurement::kNoMeasurementDb;
+    };
 
     for (int i = 0; i < numBars; ++i)
     {
-        const int   harmonicNum = i + 1;
-        const float ratioDb     = ratios[(size_t) i];
+        const int harmonicNum = i + 1;
+        const int slotLeft  = plotArea.getX() + juce::roundToInt (i * slotWidth);
+        const int slotRight = plotArea.getX() + juce::roundToInt ((i + 1) * slotWidth);
 
-        const int   slotLeft  = plotArea.getX() + juce::roundToInt (i * slotWidth);
-        const int   slotRight = plotArea.getX() + juce::roundToInt ((i + 1) * slotWidth);
-
-        // Harmonic name label below the bar slot (h1, h2, ...). Drawn even
-        // when the bar itself is below the floor so the user can see which
-        // harmonics are "missing".
         g.setColour (juce::Colours::grey);
         g.setFont (juce::FontOptions (sf (10.0f)));
         juce::Rectangle<int> nameRect (slotLeft, labelGutterBottom.getY(),
@@ -385,29 +512,64 @@ void THDDisplay::drawHarmonicBars (juce::Graphics& g, juce::Rectangle<int> area)
         g.drawText ("h" + juce::String (harmonicNum), nameRect,
                     juce::Justification::centredTop, false);
 
-        if (ratioDb <= kMinDb + 0.5f
-            || ratioDb <= THDMeasurement::kNoMeasurementDb + 1.0f) continue;
+        const int innerLeft  = slotLeft  + slotInset;
+        const int innerRight = slotRight - slotInset;
+        const int innerWidth = juce::jmax (1, innerRight - innerLeft);
+        const int subWidth   = innerWidth / visible.size();
 
-        const float t          = (juce::jlimit (kMinDb, kMaxDb, ratioDb) - kMinDb) / dbRange;
-        const int   barHeight  = juce::roundToInt (t * (float) plotArea.getHeight());
+        // Master (L) value drives the dB label above each slot. Falls
+        // back to whichever sub-bar is visible.
+        float labelDb = THDMeasurement::kNoMeasurementDb;
+        for (auto& s : visible)
+        {
+            const float v = valueFor (s.tag, i);
+            if (v > THDMeasurement::kNoMeasurementDb + 1.0f
+                && labelDb <= THDMeasurement::kNoMeasurementDb + 1.0f)
+                labelDb = v;
+            if (s.tag == 'L' && v > THDMeasurement::kNoMeasurementDb + 1.0f)
+                labelDb = v;
+        }
 
-        const int   barLeft    = slotLeft  + barInset;
-        const int   barRight   = slotRight - barInset;
-        const int   barTop     = plotArea.getBottom() - barHeight;
+        for (int sIdx = 0; sIdx < visible.size(); ++sIdx)
+        {
+            const auto& sb = visible.getReference (sIdx);
+            const float v  = valueFor (sb.tag, i);
+            if (v <= axisMinDb + 0.5f || v <= THDMeasurement::kNoMeasurementDb + 1.0f)
+                continue;
 
-        juce::Rectangle<int> bar (barLeft, barTop, barRight - barLeft, barHeight);
+            const float t         = (juce::jlimit (axisMinDb, axisMaxDb, v) - axisMinDb) / dbRange;
+            const int   barHeight = juce::roundToInt (t * (float) plotArea.getHeight());
 
-        g.setColour (barColour);
-        g.fillRect (bar);
+            const int barLeft  = innerLeft + sIdx * subWidth + 1;
+            const int barRight = innerLeft + (sIdx + 1) * subWidth - 1;
+            const int barTop   = plotArea.getBottom() - barHeight;
 
-        const int labelY = juce::jmax (plotArea.getY() + sx (1),
-                                       barTop - dbLabelHeight - sx (1));
-        juce::Rectangle<int> dbRect (slotLeft, labelY,
-                                     slotRight - slotLeft, dbLabelHeight);
+            g.setColour (sb.colour);
+            g.fillRect (juce::Rectangle<int> (barLeft, barTop,
+                                              juce::jmax (1, barRight - barLeft),
+                                              barHeight));
+        }
 
-        g.setColour (juce::Colours::whitesmoke);
-        g.setFont (juce::FontOptions (sf (10.0f)));
-        g.drawText (juce::String (ratioDb, 1), dbRect,
-                    juce::Justification::centred, false);
+        if (labelDb > THDMeasurement::kNoMeasurementDb + 1.0f)
+        {
+            float maxV = THDMeasurement::kNoMeasurementDb;
+            for (auto& s : visible)
+            {
+                const float v = valueFor (s.tag, i);
+                if (v > maxV) maxV = v;
+            }
+            const float tMax = (juce::jlimit (axisMinDb, axisMaxDb, maxV) - axisMinDb) / dbRange;
+            const int   tallestTop = plotArea.getBottom() - juce::roundToInt (tMax * (float) plotArea.getHeight());
+
+            const int labelY = juce::jmax (plotArea.getY() + sx (1),
+                                           tallestTop - dbLabelHeight - sx (1));
+            juce::Rectangle<int> dbRect (slotLeft, labelY,
+                                         slotRight - slotLeft, dbLabelHeight);
+
+            g.setColour (juce::Colours::whitesmoke);
+            g.setFont (juce::FontOptions (sf (10.0f)));
+            g.drawText (juce::String (labelDb, 1), dbRect,
+                        juce::Justification::centred, false);
+        }
     }
 }

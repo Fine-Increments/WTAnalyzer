@@ -60,36 +60,62 @@ public:
     // the in-progress live measurement.
     void clearPeaks();
 
-    void update (const float* preDb, const float* postDb);
+    // Stereo update: each channel's algorithm runs independently, and a
+    // Diff array (R - L per bin) is derived from the live + peak results
+    // for the stereo overlay. Mono callers pass identical L and R arrays.
+    void update (const float* preDbL, const float* postDbL,
+                 const float* preDbR, const float* postDbR);
 
-    bool  isValid()           const noexcept { return valid; }
-    float getFundamentalHz()  const noexcept { return fundamentalHz; }
-    int   getFundamentalBin() const noexcept { return fundamentalBin; }
+    // L (master) accessors - unsuffixed names match the pre-stereo API
+    // so existing callers continue to work.
+    bool  isValid()           const noexcept { return chL.valid; }
+    float getFundamentalHz()  const noexcept { return chL.fundamentalHz; }
+    int   getFundamentalBin() const noexcept { return chL.fundamentalBin; }
+    const std::vector<float>& getLiveDifferentialDb() const noexcept { return chL.liveDifferentialDb; }
+    const std::vector<float>& getPeakDifferentialDb() const noexcept { return chL.peakDifferentialDb; }
+    float getPeakResidueDb()  const noexcept { return chL.peakResidueDb; }
+    float getPeakResidueHz()  const noexcept { return chL.peakResidueHz; }
 
-    // Per-frame off-grid differential (post^2 - pre^2 in dB). Bins that
-    // are on the grid OR contribute no added energy hold kNoMeasurementDb.
-    const std::vector<float>& getLiveDifferentialDb() const noexcept { return liveDifferentialDb; }
+    // R-channel accessors.
+    bool  isValid_R()           const noexcept { return chR.valid; }
+    float getFundamentalHz_R()  const noexcept { return chR.fundamentalHz; }
+    int   getFundamentalBin_R() const noexcept { return chR.fundamentalBin; }
+    const std::vector<float>& getLiveDifferentialDb_R() const noexcept { return chR.liveDifferentialDb; }
+    const std::vector<float>& getPeakDifferentialDb_R() const noexcept { return chR.peakDifferentialDb; }
+    float getPeakResidueDb_R()  const noexcept { return chR.peakResidueDb; }
+    float getPeakResidueHz_R()  const noexcept { return chR.peakResidueHz; }
 
-    // Peak-hold of the above across frames since the last clear / reset.
-    const std::vector<float>& getPeakDifferentialDb() const noexcept { return peakDifferentialDb; }
+    // Diff: R - L per bin. Available for both the live and peak-hold
+    // arrays. Bins where either channel has no measurement carry
+    // kNoMeasurementDb so the renderer breaks the path there.
+    const std::vector<float>& getLiveDifferentialDb_Diff() const noexcept { return liveDifferentialDb_Diff; }
+    const std::vector<float>& getPeakDifferentialDb_Diff() const noexcept { return peakDifferentialDb_Diff; }
 
-    int   getNumBins() const noexcept { return (int) peakDifferentialDb.size(); }
-
-    // Loudest peak-held differential and its frequency, for the HUD.
-    float getPeakResidueDb() const noexcept { return peakResidueDb; }
-    float getPeakResidueHz() const noexcept { return peakResidueHz; }
+    int   getNumBins() const noexcept { return (int) chL.peakDifferentialDb.size(); }
 
 private:
-    int   numBins        = 0;
-    float binFreqScale   = 0.0f;
+    // Per-channel state. Each channel locates its own fundamental and
+    // accumulates its own peak-held residue across frames.
+    struct ChannelState
+    {
+        bool  valid          = false;
+        int   fundamentalBin = 0;
+        float fundamentalHz  = 0.0f;
+        float peakResidueDb  = kNoMeasurementDb;
+        float peakResidueHz  = 0.0f;
+        std::vector<float> liveDifferentialDb;
+        std::vector<float> peakDifferentialDb;
+    };
 
-    bool  valid          = false;
-    int   fundamentalBin = 0;
-    float fundamentalHz  = 0.0f;
+    int   numBins      = 0;
+    float binFreqScale = 0.0f;
 
-    float peakResidueDb  = kNoMeasurementDb;
-    float peakResidueHz  = 0.0f;
+    ChannelState chL;
+    ChannelState chR;
 
-    std::vector<float> liveDifferentialDb;
-    std::vector<float> peakDifferentialDb;
+    std::vector<float> liveDifferentialDb_Diff;
+    std::vector<float> peakDifferentialDb_Diff;
+
+    // Runs the per-frame algorithm for one channel's data into `ch`.
+    void updateChannel (ChannelState& ch, const float* preDb, const float* postDb);
 };

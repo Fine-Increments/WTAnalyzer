@@ -58,33 +58,39 @@ public:
     static constexpr float kMinSeparationHz  = 100.0f;
 
     // Selects which set of bars to expose via the getProduct* accessors.
-    enum class Source { Diff, Pre, Post };
+    enum class Source  { Diff, Pre, Post };
+    enum class Channel { L, R };
 
     void prepare (int numSpectrumBins, float binFrequencyScale);
     void reset();
-    void update (const float* preDb, const float* postDb);
 
-    bool  isValid() const noexcept { return valid; }
+    // Stereo update: each channel runs the IMD algorithm independently
+    // on its own pre / post spectra. Mono callers pass the same L and R
+    // arrays.
+    void update (const float* preDbL, const float* postDbL,
+                 const float* preDbR, const float* postDbR);
 
-    // Fundamental frequencies. f1 is always the louder of the two.
-    float getF1Hz() const noexcept { return f1Hz; }
-    float getF2Hz() const noexcept { return f2Hz; }
+    bool  isValid (Channel ch = Channel::L) const noexcept { return get(ch).valid; }
+
+    // Fundamental frequencies. f1 is the lower-frequency tone.
+    float getF1Hz (Channel ch = Channel::L) const noexcept { return get(ch).f1Hz; }
+    float getF2Hz (Channel ch = Channel::L) const noexcept { return get(ch).f2Hz; }
 
     // Pre / Post absolute dB at each fundamental, for the subline readout.
-    float getF1Db (Source) const noexcept;
-    float getF2Db (Source) const noexcept;
+    float getF1Db (Source, Channel ch = Channel::L) const noexcept;
+    float getF2Db (Source, Channel ch = Channel::L) const noexcept;
 
     // Total IMD% across all products. Always the differential value.
-    float getTotalImdPercent() const noexcept { return imdPercent; }
-    float getTotalImdDb()      const noexcept { return imdDb; }
+    float getTotalImdPercent (Channel ch = Channel::L) const noexcept { return get(ch).imdPercent; }
+    float getTotalImdDb      (Channel ch = Channel::L) const noexcept { return get(ch).imdDb; }
 
     int   getNumProducts() const noexcept { return kNumProducts; }
 
     // Per-product accessors. Index range: 0..kNumProducts-1.
     int   getProductOrder    (int idx) const noexcept;
-    float getProductHz       (int idx) const noexcept;
-    float getProductDb       (Source, int idx) const noexcept;   // absolute (FS)
-    float getProductRatioDb  (Source, int idx) const noexcept;   // relative to f1
+    float getProductHz       (int idx, Channel ch = Channel::L) const noexcept;
+    float getProductDb       (Source, int idx, Channel ch = Channel::L) const noexcept;   // absolute (FS)
+    float getProductRatioDb  (Source, int idx, Channel ch = Channel::L) const noexcept;   // relative to louder fundamental
     const char* getProductLabel (int idx) const noexcept;        // "f1+f2", "2f1-f2", ...
 
 private:
@@ -114,28 +120,40 @@ private:
         std::array<float, kNumProducts> productRatioDb {};
     };
 
-    SourceData preData;
-    SourceData postData;
-    SourceData diffData;
+    struct ChannelState
+    {
+        bool  valid      = false;
+        int   f1Bin      = 0;
+        int   f2Bin      = 0;
+        float f1Hz       = 0.0f;
+        float f2Hz       = 0.0f;
+        float preF1Db    = kNoMeasurementDb;
+        float preF2Db    = kNoMeasurementDb;
+        float postF1Db   = kNoMeasurementDb;
+        float postF2Db   = kNoMeasurementDb;
+        float imdPercent = 0.0f;
+        float imdDb      = kNoMeasurementDb;
+
+        std::array<int,   kNumProducts> productBin {};
+        std::array<float, kNumProducts> productHz  {};
+
+        SourceData preData;
+        SourceData postData;
+        SourceData diffData;
+    };
 
     int   numBins      = 0;
     float binFreqScale = 0.0f;
 
-    bool  valid        = false;
-    int   f1Bin        = 0;
-    int   f2Bin        = 0;
-    float f1Hz         = 0.0f;
-    float f2Hz         = 0.0f;
-    float preF1Db      = kNoMeasurementDb;
-    float preF2Db      = kNoMeasurementDb;
-    float postF1Db     = kNoMeasurementDb;
-    float postF2Db     = kNoMeasurementDb;
+    ChannelState chL;
+    ChannelState chR;
 
-    float imdPercent   = 0.0f;
-    float imdDb        = kNoMeasurementDb;
-
-    std::array<int,   kNumProducts> productBin {};
-    std::array<float, kNumProducts> productHz  {};
+    const ChannelState& get (Channel ch) const noexcept
+    {
+        return ch == Channel::L ? chL : chR;
+    }
 
     static void resetSourceData (SourceData& d);
+    static void resetChannel    (ChannelState& ch);
+    void        updateChannel   (ChannelState& ch, const float* preDb, const float* postDb);
 };

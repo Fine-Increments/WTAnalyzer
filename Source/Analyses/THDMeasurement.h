@@ -53,43 +53,37 @@ public:
     // Selects which set of bars to expose via the getHarmonic* accessors.
     enum class Source { Diff, Pre, Post };
 
+    // Channel selector for the stereo getters below.
+    enum class Channel { L, R };
+
     void prepare (int numSpectrumBins, float binFrequencyScale);
     void reset();
 
-    // Operates on the same pre/post dB arrays the spectrum FFT produces.
-    // Each array must hold at least numSpectrumBins values.
-    void update (const float* preDb, const float* postDb);
+    // Stereo update: each channel runs the THD algorithm independently
+    // on its own pre / post spectrum data. Mono callers can pass the
+    // same L and R arrays. Real-time-safe.
+    void update (const float* preDbL, const float* postDbL,
+                 const float* preDbR, const float* postDbR);
 
-    // Was the most recent update able to find a valid fundamental?
-    bool  isValid()              const noexcept { return valid; }
-
-    // Fundamental frequency (Hz) and FFT bin index (located in pre). Only
-    // meaningful when isValid().
-    float getFundamentalHz()     const noexcept { return fundamentalHz; }
-    int   getFundamentalBin()    const noexcept { return fundamentalBin; }
-
-    // Total THD across harmonics 2..N. Always the differential measurement:
-    // added harmonic energy in post relative to pre's fundamental.
-    float getTotalThdPercent()   const noexcept { return thdPercent; }
-    float getTotalThdDb()        const noexcept { return thdDb; }
-
-    // Number of harmonics that fit below Nyquist for the current fundamental.
-    int   getNumValidHarmonics() const noexcept { return numValidHarmonics; }
+    // Validity, fundamental, and totals - per channel. The unsuffixed
+    // forms return the L channel for backwards compatibility with
+    // pre-stereo callers.
+    bool  isValid              (Channel ch = Channel::L) const noexcept { return get(ch).valid; }
+    float getFundamentalHz     (Channel ch = Channel::L) const noexcept { return get(ch).fundamentalHz; }
+    int   getFundamentalBin    (Channel ch = Channel::L) const noexcept { return get(ch).fundamentalBin; }
+    float getTotalThdPercent   (Channel ch = Channel::L) const noexcept { return get(ch).thdPercent; }
+    float getTotalThdDb        (Channel ch = Channel::L) const noexcept { return get(ch).thdDb; }
+    int   getNumValidHarmonics (Channel ch = Channel::L) const noexcept { return get(ch).numValidHarmonics; }
+    float getPreFundamentalDb  (Channel ch = Channel::L) const noexcept { return get(ch).preFundamentalDb; }
+    float getPostFundamentalDb (Channel ch = Channel::L) const noexcept { return get(ch).postFundamentalDb; }
 
     // harmonic = 1 is the fundamental, 2 is the 2nd harmonic, etc.
-    // Returns kNoMeasurementDb for harmonics out of range or above Nyquist.
-    //
-    // getHarmonicDb is only meaningful for Pre / Post (absolute spectrum
-    // magnitudes). For Diff it returns the same value as getHarmonicRatioDb
-    // since the differential bar is a ratio by construction.
-    float getHarmonicDb      (Source source, int harmonic) const noexcept;
-    float getHarmonicRatioDb (Source source, int harmonic) const noexcept;
-
-    // Fundamental level (h1) of the pre and post signals in dB, for the
-    // subline readout. Pre's value drives the canonical "Fundamental at X dB"
-    // text since pre is the test signal reference.
-    float getPreFundamentalDb()  const noexcept { return preFundamentalDb;  }
-    float getPostFundamentalDb() const noexcept { return postFundamentalDb; }
+    // Returns kNoMeasurementDb for harmonics out of range or above
+    // Nyquist. getHarmonicDb is meaningful for Pre / Post (absolute
+    // spectrum magnitudes); for Diff it returns the same value as the
+    // ratio since the differential bar is a ratio by construction.
+    float getHarmonicDb      (Source source, int harmonic, Channel ch = Channel::L) const noexcept;
+    float getHarmonicRatioDb (Source source, int harmonic, Channel ch = Channel::L) const noexcept;
 
 private:
     struct SourceData
@@ -98,21 +92,34 @@ private:
         std::array<float, kMaxHarmonics> harmonicRatioDb {};
     };
 
-    SourceData preData;
-    SourceData postData;
-    SourceData diffData;   // ratio dB relative to pre fundamental (added energy)
+    struct ChannelState
+    {
+        bool  valid              = false;
+        int   fundamentalBin     = 0;
+        float fundamentalHz      = 0.0f;
+        float thdPercent         = 0.0f;
+        float thdDb              = kNoMeasurementDb;
+        float preFundamentalDb   = kNoMeasurementDb;
+        float postFundamentalDb  = kNoMeasurementDb;
+        int   numValidHarmonics  = 0;
 
-    int   numBins        = 0;
-    float binFreqScale   = 0.0f;
+        SourceData preData;
+        SourceData postData;
+        SourceData diffData;
+    };
 
-    bool  valid              = false;
-    int   fundamentalBin     = 0;
-    float fundamentalHz      = 0.0f;
-    float thdPercent         = 0.0f;
-    float thdDb              = kNoMeasurementDb;
-    float preFundamentalDb   = kNoMeasurementDb;
-    float postFundamentalDb  = kNoMeasurementDb;
-    int   numValidHarmonics  = 0;
+    int   numBins      = 0;
+    float binFreqScale = 0.0f;
+
+    ChannelState chL;
+    ChannelState chR;
+
+    const ChannelState& get (Channel ch) const noexcept
+    {
+        return ch == Channel::L ? chL : chR;
+    }
 
     static void resetSourceData (SourceData& d);
+    static void resetChannel    (ChannelState& ch);
+    void updateChannel (ChannelState& ch, const float* preDb, const float* postDb);
 };

@@ -127,46 +127,55 @@ IMDMeasurement::Source IMDDisplay::currentViewSource() const noexcept
     }
 }
 
-juce::Colour IMDDisplay::currentViewColour() const noexcept
+IMDDisplay::ViewColours IMDDisplay::currentViewColours() const noexcept
 {
     switch (currentViewSource())
     {
-        case IMDMeasurement::Source::Pre:  return WTColors::preEffect;
-        case IMDMeasurement::Source::Post: return WTColors::postEffect;
-        case IMDMeasurement::Source::Diff: return WTColors::analysis;
+        case IMDMeasurement::Source::Pre:  return { WTColors::preEffect,  WTColors::preEffect_R  };
+        case IMDMeasurement::Source::Post: return { WTColors::postEffect, WTColors::postEffect_R };
+        case IMDMeasurement::Source::Diff: return { WTColors::analysis,   WTColors::analysis_R   };
     }
-    return WTColors::analysis;
+    return { WTColors::analysis, WTColors::analysis_R };
 }
 
 IMDDisplay::DisplayFrame IMDDisplay::sampleProcessor() const
 {
     DisplayFrame f;
     const auto& imd = processor.imdMeasurement;
-    f.valid = imd.isValid();
 
-    for (auto& srcArr : f.ratioDb)
-        std::fill (srcArr.begin(), srcArr.end(), IMDMeasurement::kNoMeasurementDb);
+    auto fillFromChannel = [&] (ChannelFrame& cf, IMDMeasurement::Channel chSel)
+    {
+        for (auto& srcArr : cf.ratioDb)
+            std::fill (srcArr.begin(), srcArr.end(), IMDMeasurement::kNoMeasurementDb);
 
-    if (! f.valid) return f;
+        cf.valid = imd.isValid (chSel);
+        if (! cf.valid) return;
 
-    f.imdPercent = imd.getTotalImdPercent();
-    f.f1Hz       = imd.getF1Hz();
-    f.f2Hz       = imd.getF2Hz();
-    f.preF1Db    = imd.getF1Db (IMDMeasurement::Source::Pre);
-    f.preF2Db    = imd.getF2Db (IMDMeasurement::Source::Pre);
-    f.postF1Db   = imd.getF1Db (IMDMeasurement::Source::Post);
-    f.postF2Db   = imd.getF2Db (IMDMeasurement::Source::Post);
+        cf.imdPercent = imd.getTotalImdPercent (chSel);
+        cf.f1Hz       = imd.getF1Hz (chSel);
+        cf.f2Hz       = imd.getF2Hz (chSel);
+        cf.preF1Db    = imd.getF1Db (IMDMeasurement::Source::Pre,  chSel);
+        cf.preF2Db    = imd.getF2Db (IMDMeasurement::Source::Pre,  chSel);
+        cf.postF1Db   = imd.getF1Db (IMDMeasurement::Source::Post, chSel);
+        cf.postF2Db   = imd.getF2Db (IMDMeasurement::Source::Post, chSel);
 
-    static constexpr IMDMeasurement::Source kSources[3] = {
-        IMDMeasurement::Source::Diff,
-        IMDMeasurement::Source::Pre,
-        IMDMeasurement::Source::Post
+        for (int p = 0; p < IMDMeasurement::kNumProducts; ++p)
+            cf.productHz[(size_t) p] = imd.getProductHz (p, chSel);
+
+        static constexpr IMDMeasurement::Source kSources[3] = {
+            IMDMeasurement::Source::Diff,
+            IMDMeasurement::Source::Pre,
+            IMDMeasurement::Source::Post
+        };
+
+        for (int s = 0; s < 3; ++s)
+            for (int p = 0; p < IMDMeasurement::kNumProducts; ++p)
+                cf.ratioDb[(size_t) s][(size_t) p]
+                    = imd.getProductRatioDb (kSources[s], p, chSel);
     };
 
-    for (int s = 0; s < 3; ++s)
-        for (int p = 0; p < IMDMeasurement::kNumProducts; ++p)
-            f.ratioDb[(size_t) s][(size_t) p] = imd.getProductRatioDb (kSources[s], p);
-
+    fillFromChannel (f.L, IMDMeasurement::Channel::L);
+    fillFromChannel (f.R, IMDMeasurement::Channel::R);
     return f;
 }
 
@@ -180,12 +189,17 @@ void IMDDisplay::timerCallback()
 
     DisplayFrame current = sampleProcessor();
 
-    if (isHolding && displayed.valid && current.valid)
+    auto holdChannel = [] (ChannelFrame& held, const ChannelFrame& cur)
     {
-        for (size_t s = 0; s < displayed.ratioDb.size(); ++s)
+        if (! (held.valid && cur.valid))
         {
-            auto& heldArr = displayed.ratioDb[s];
-            const auto& curArr = current.ratioDb[s];
+            held = cur;
+            return;
+        }
+        for (size_t s = 0; s < held.ratioDb.size(); ++s)
+        {
+            auto& heldArr = held.ratioDb[s];
+            const auto& curArr = cur.ratioDb[s];
             for (size_t p = 0; p < heldArr.size(); ++p)
             {
                 const float curVal = curArr[p];
@@ -195,14 +209,20 @@ void IMDDisplay::timerCallback()
                                 : std::max (heldArr[p], curVal);
             }
         }
+        held.imdPercent = std::max (held.imdPercent, cur.imdPercent);
+        held.f1Hz       = cur.f1Hz;
+        held.f2Hz       = cur.f2Hz;
+        held.preF1Db    = cur.preF1Db;
+        held.preF2Db    = cur.preF2Db;
+        held.postF1Db   = cur.postF1Db;
+        held.postF2Db   = cur.postF2Db;
+        held.productHz  = cur.productHz;
+    };
 
-        displayed.imdPercent = std::max (displayed.imdPercent, current.imdPercent);
-        displayed.f1Hz       = current.f1Hz;
-        displayed.f2Hz       = current.f2Hz;
-        displayed.preF1Db    = current.preF1Db;
-        displayed.preF2Db    = current.preF2Db;
-        displayed.postF1Db   = current.postF1Db;
-        displayed.postF2Db   = current.postF2Db;
+    if (isHolding)
+    {
+        holdChannel (displayed.L, current.L);
+        holdChannel (displayed.R, current.R);
     }
     else
     {
@@ -254,7 +274,7 @@ void IMDDisplay::paint (juce::Graphics& g)
     g.setColour (juce::Colour (0xff111213));
     g.fillRect (bounds);
 
-    if (! displayed.valid)
+    if (! displayed.anyValid())
     {
         g.setColour (juce::Colours::grey);
         g.setFont (juce::FontOptions (sf (14.0f)));
@@ -269,16 +289,30 @@ void IMDDisplay::paint (juce::Graphics& g)
     auto topL = topRow.removeFromLeft (topRow.getWidth() / 2);
     auto topR = topRow;
 
-    const float imdPct = displayed.imdPercent;
-    juce::String imdText;
-    if (imdPct < 0.01f)         imdText = juce::String (imdPct, 4) + "%";
-    else if (imdPct < 1.0f)     imdText = juce::String (imdPct, 3) + "%";
-    else if (imdPct < 100.0f)   imdText = juce::String (imdPct, 2) + "%";
-    else                        imdText = juce::String (imdPct, 1) + "%";
+    auto formatPct = [] (float p) -> juce::String
+    {
+        if (p < 0.01f)        return juce::String (p, 4) + "%";
+        if (p < 1.0f)         return juce::String (p, 3) + "%";
+        if (p < 100.0f)       return juce::String (p, 2) + "%";
+        return                       juce::String (p, 1) + "%";
+    };
 
-    g.setColour (WTColors::analysis);
-    g.setFont (juce::FontOptions (sf (30.0f)));
-    g.drawText (imdText + " IMD", topL, juce::Justification::centred, false);
+    auto topLTop = topL.withHeight (topL.getHeight() / 2);
+    auto topLBot = topL.withTrimmedTop (topL.getHeight() / 2);
+
+    g.setFont (juce::FontOptions (sf (18.0f)));
+    if (displayed.L.valid)
+    {
+        g.setColour (WTColors::analysis);
+        g.drawText (formatPct (displayed.L.imdPercent) + " L  IMD",
+                    topLTop, juce::Justification::centred, false);
+    }
+    if (displayed.R.valid)
+    {
+        g.setColour (WTColors::analysis_R);
+        g.drawText (formatPct (displayed.R.imdPercent) + " R  IMD",
+                    topLBot, juce::Justification::centred, false);
+    }
 
     auto formatFreq = [] (float hz) -> juce::String
     {
@@ -287,9 +321,10 @@ void IMDDisplay::paint (juce::Graphics& g)
         else                    return juce::String (hz / 1000.0f, 1) + " kHz";
     };
 
+    const auto& primary = displayed.L.valid ? displayed.L : displayed.R;
     g.setColour (juce::Colours::grey);
     g.setFont (juce::FontOptions (sf (12.0f)));
-    g.drawText ("f1 " + formatFreq (displayed.f1Hz) + "   f2 " + formatFreq (displayed.f2Hz),
+    g.drawText ("f1 " + formatFreq (primary.f1Hz) + "   f2 " + formatFreq (primary.f2Hz),
                 topR, juce::Justification::centred, false);
 
     drawProductBars (g, bounds.reduced (sx (24), sx (12)));
@@ -297,14 +332,31 @@ void IMDDisplay::paint (juce::Graphics& g)
 
 void IMDDisplay::drawProductBars (juce::Graphics& g, juce::Rectangle<int> area)
 {
-    const auto  src       = currentViewSource();
-    const auto  barColour = currentViewColour();
-    const int   srcIdx    = sourceIndex (src);
-    const auto& ratios    = displayed.ratioDb[(size_t) srcIdx];
+    const auto src    = currentViewSource();
+    const int  srcIdx = sourceIndex (src);
+    const auto cols   = currentViewColours();
 
-    constexpr float kMaxDb =   0.0f;
-    constexpr float kMinDb = -100.0f;
-    const float     dbRange = kMaxDb - kMinDb;
+    const bool showL    = *processor.apvts.getRawParameterValue ("showChannelL")    > 0.5f;
+    const bool showR    = *processor.apvts.getRawParameterValue ("showChannelR")    > 0.5f;
+    const bool showDiff = *processor.apvts.getRawParameterValue ("showChannelDiff") > 0.5f;
+    const bool diffMode = showDiff;
+
+    juce::Array<SubBar> visible;
+    if (! diffMode)
+    {
+        if (showL) visible.add ({ 'L', cols.L });
+        if (showR) visible.add ({ 'R', cols.R });
+    }
+
+    // Y axis range. In L/R view: normal -100..0 dB. In Diff view: bipolar
+    // -30..+30 centred at zero so the single signed bar can grow either way.
+    constexpr float kMaxDb     =   0.0f;
+    constexpr float kMinDb     = -100.0f;
+    constexpr float kDiffMaxDb = +30.0f;
+    constexpr float kDiffMinDb = -30.0f;
+    const float     axisMaxDb  = diffMode ? kDiffMaxDb : kMaxDb;
+    const float     axisMinDb  = diffMode ? kDiffMinDb : kMinDb;
+    const float     dbRange    = axisMaxDb - axisMinDb;
 
     auto plotArea = area;
     auto labelGutterLeft   = plotArea.removeFromLeft (sx (32));
@@ -314,55 +366,130 @@ void IMDDisplay::drawProductBars (juce::Graphics& g, juce::Rectangle<int> area)
     g.fillRect (plotArea);
 
     g.setColour (juce::Colour (0xff2a2d32));
-    const std::array<float, 5> kDbGrid { 0.0f, -20.0f, -40.0f, -60.0f, -80.0f };
-    for (float db : kDbGrid)
+    const std::array<float, 5> kDbGridNormal { 0.0f, -20.0f, -40.0f, -60.0f, -80.0f };
+    const std::array<float, 5> kDbGridDiff   { -30.0f, -15.0f, 0.0f, 15.0f, 30.0f };
+    const auto& dbGrid = diffMode ? kDbGridDiff : kDbGridNormal;
+    for (float db : dbGrid)
     {
-        const float t = (db - kMinDb) / dbRange;
+        const float t = (db - axisMinDb) / dbRange;
         const int   y = plotArea.getY() + juce::roundToInt ((1.0f - t) * (float) plotArea.getHeight());
         g.drawLine ((float) plotArea.getX(), (float) y, (float) plotArea.getRight(), (float) y, sf (1.0f));
     }
 
     g.setColour (juce::Colours::grey);
     g.setFont (juce::FontOptions (sf (10.0f)));
-    for (float db : kDbGrid)
+    for (float db : dbGrid)
     {
-        const float t = (db - kMinDb) / dbRange;
+        const float t = (db - axisMinDb) / dbRange;
         const int   y = plotArea.getY() + juce::roundToInt ((1.0f - t) * (float) plotArea.getHeight());
 
         const int textHeight = sx (12);
-        const juce::String text = (db == 0.0f) ? juce::String ("0") : juce::String ((int) db);
+        juce::String text;
+        if (db == 0.0f)     text = "0";
+        else if (db > 0.0f) text = "+" + juce::String ((int) db);
+        else                text = juce::String ((int) db);
         juce::Rectangle<int> r (labelGutterLeft.getX(), y - textHeight / 2,
                                 labelGutterLeft.getWidth() - sx (4), textHeight);
         g.drawText (text, r, juce::Justification::centredRight, false);
     }
 
+    if (! diffMode && visible.isEmpty()) return;
+
+    BarAxisConfig axis { diffMode, axisMinDb, axisMaxDb };
+
     if (isHzLayout())
-        drawProductBarsByHz    (g, plotArea, labelGutterBottom, ratios, barColour);
+        drawProductBarsByHz    (g, plotArea, labelGutterBottom, srcIdx, visible, cols, axis);
     else
-        drawProductBarsByOrder (g, plotArea, labelGutterBottom, ratios, barColour);
+        drawProductBarsByOrder (g, plotArea, labelGutterBottom, srcIdx, visible, cols, axis);
 }
 
 void IMDDisplay::drawProductBarsByOrder (juce::Graphics& g,
                                          juce::Rectangle<int> plotArea,
                                          juce::Rectangle<int> labelGutterBottom,
-                                         const std::array<float, IMDMeasurement::kNumProducts>& ratios,
-                                         juce::Colour barColour)
+                                         int sourceIdx,
+                                         const juce::Array<SubBar>& visible,
+                                         ViewColours cols,
+                                         BarAxisConfig axis)
 {
-    constexpr float kMaxDb =   0.0f;
-    constexpr float kMinDb = -100.0f;
-    const float     dbRange = kMaxDb - kMinDb;
+    const float kMaxDb  = axis.axisMaxDb;
+    const float kMinDb  = axis.axisMinDb;
+    const float dbRange = kMaxDb - kMinDb;
 
     const int numBars = IMDMeasurement::kNumProducts;
 
     const float availableWidth = (float) plotArea.getWidth();
     const float slotWidth      = availableWidth / (float) numBars;
-    const int   barInset       = sx (4);
+    const int   slotInset      = sx (3);
     const int   dbLabelHeight  = sx (12);
+
+    auto yForDb = [&] (float db) -> int
+    {
+        return plotArea.getY()
+             + juce::roundToInt ((1.0f - (db - kMinDb) / dbRange) * (float) plotArea.getHeight());
+    };
+
+    // ----- Diff mode: one bipolar bar per product ------------------------
+    if (axis.diffMode)
+    {
+        const int zeroY = yForDb (0.0f);
+
+        for (int i = 0; i < numBars; ++i)
+        {
+            const int slotLeft  = plotArea.getX() + juce::roundToInt (i * slotWidth);
+            const int slotRight = plotArea.getX() + juce::roundToInt ((i + 1) * slotWidth);
+
+            g.setColour (juce::Colours::grey);
+            g.setFont (juce::FontOptions (sf (9.0f)));
+            juce::Rectangle<int> nameRect (slotLeft, labelGutterBottom.getY(),
+                                           slotRight - slotLeft, labelGutterBottom.getHeight());
+            g.drawText (processor.imdMeasurement.getProductLabel (i), nameRect,
+                        juce::Justification::centredTop, false);
+
+            const float l = displayed.L.ratioDb[(size_t) sourceIdx][(size_t) i];
+            const float r = displayed.R.ratioDb[(size_t) sourceIdx][(size_t) i];
+            if (l <= IMDMeasurement::kNoMeasurementDb + 1.0f
+             || r <= IMDMeasurement::kNoMeasurementDb + 1.0f)
+                continue;
+
+            const float v = r - l;
+            const int   vY      = yForDb (juce::jlimit (kMinDb, kMaxDb, v));
+            const int   barTop  = juce::jmin (zeroY, vY);
+            const int   barBot  = juce::jmax (zeroY, vY);
+            const int   barLeft = slotLeft  + slotInset;
+            const int   barRight = slotRight - slotInset;
+
+            g.setColour (v >= 0.0f ? cols.R : cols.L);
+            g.fillRect (juce::Rectangle<int> (barLeft, barTop,
+                                              juce::jmax (1, barRight - barLeft),
+                                              juce::jmax (1, barBot - barTop)));
+
+            const int labelY = (v >= 0.0f)
+                ? juce::jmax (plotArea.getY() + sx (1), vY - dbLabelHeight - sx (1))
+                : juce::jmin (plotArea.getBottom() - dbLabelHeight, vY + sx (1));
+            juce::Rectangle<int> dbRect (slotLeft, labelY,
+                                         slotRight - slotLeft, dbLabelHeight);
+            g.setColour (juce::Colours::whitesmoke);
+            g.setFont (juce::FontOptions (sf (9.0f)));
+            g.drawText ((v >= 0.0f ? "+" : "") + juce::String (v, 1), dbRect,
+                        juce::Justification::centred, false);
+        }
+        return;
+    }
+
+    auto valueFor = [&] (char tag, int productIdx) -> float
+    {
+        const float l = displayed.L.ratioDb[(size_t) sourceIdx][(size_t) productIdx];
+        const float r = displayed.R.ratioDb[(size_t) sourceIdx][(size_t) productIdx];
+        switch (tag)
+        {
+            case 'L': return l;
+            case 'R': return r;
+        }
+        return IMDMeasurement::kNoMeasurementDb;
+    };
 
     for (int i = 0; i < numBars; ++i)
     {
-        const float ratioDb = ratios[(size_t) i];
-
         const int slotLeft  = plotArea.getX() + juce::roundToInt (i * slotWidth);
         const int slotRight = plotArea.getX() + juce::roundToInt ((i + 1) * slotWidth);
 
@@ -373,41 +500,72 @@ void IMDDisplay::drawProductBarsByOrder (juce::Graphics& g,
         g.drawText (processor.imdMeasurement.getProductLabel (i), nameRect,
                     juce::Justification::centredTop, false);
 
-        if (ratioDb <= kMinDb + 0.5f
-            || ratioDb <= IMDMeasurement::kNoMeasurementDb + 1.0f) continue;
+        const int innerLeft  = slotLeft  + slotInset;
+        const int innerRight = slotRight - slotInset;
+        const int innerWidth = juce::jmax (1, innerRight - innerLeft);
+        const int subWidth   = innerWidth / visible.size();
 
-        const float t          = (juce::jlimit (kMinDb, kMaxDb, ratioDb) - kMinDb) / dbRange;
-        const int   barHeight  = juce::roundToInt (t * (float) plotArea.getHeight());
+        float maxV = IMDMeasurement::kNoMeasurementDb;
+        for (auto& s : visible)
+        {
+            const float v = valueFor (s.tag, i);
+            if (v > maxV) maxV = v;
+        }
 
-        const int   barLeft    = slotLeft  + barInset;
-        const int   barRight   = slotRight - barInset;
-        const int   barTop     = plotArea.getBottom() - barHeight;
+        for (int sIdx = 0; sIdx < visible.size(); ++sIdx)
+        {
+            const auto& sb = visible.getReference (sIdx);
+            const float v  = valueFor (sb.tag, i);
+            if (v <= kMinDb + 0.5f || v <= IMDMeasurement::kNoMeasurementDb + 1.0f)
+                continue;
 
-        juce::Rectangle<int> bar (barLeft, barTop, barRight - barLeft, barHeight);
+            const float t         = (juce::jlimit (kMinDb, kMaxDb, v) - kMinDb) / dbRange;
+            const int   barHeight = juce::roundToInt (t * (float) plotArea.getHeight());
 
-        g.setColour (barColour);
-        g.fillRect (bar);
+            const int barLeft  = innerLeft + sIdx * subWidth + 1;
+            const int barRight = innerLeft + (sIdx + 1) * subWidth - 1;
+            const int barTop   = plotArea.getBottom() - barHeight;
 
-        const int labelY = juce::jmax (plotArea.getY() + sx (1),
-                                       barTop - dbLabelHeight - sx (1));
-        juce::Rectangle<int> dbRect (slotLeft, labelY,
-                                     slotRight - slotLeft, dbLabelHeight);
+            g.setColour (sb.colour);
+            g.fillRect (juce::Rectangle<int> (barLeft, barTop,
+                                              juce::jmax (1, barRight - barLeft),
+                                              barHeight));
+        }
 
-        g.setColour (juce::Colours::whitesmoke);
-        g.setFont (juce::FontOptions (sf (9.0f)));
-        g.drawText (juce::String (ratioDb, 1), dbRect,
-                    juce::Justification::centred, false);
+        if (maxV > IMDMeasurement::kNoMeasurementDb + 1.0f)
+        {
+            // Master (L) value labels the slot when available; falls back
+            // to the first visible sub-bar otherwise.
+            float labelDb = displayed.L.ratioDb[(size_t) sourceIdx][(size_t) i];
+            if (labelDb <= IMDMeasurement::kNoMeasurementDb + 1.0f)
+                labelDb = valueFor (visible.getReference (0).tag, i);
+
+            const float tMax       = (juce::jlimit (kMinDb, kMaxDb, maxV) - kMinDb) / dbRange;
+            const int   tallestTop = plotArea.getBottom() - juce::roundToInt (tMax * (float) plotArea.getHeight());
+
+            const int labelY = juce::jmax (plotArea.getY() + sx (1),
+                                           tallestTop - dbLabelHeight - sx (1));
+            juce::Rectangle<int> dbRect (slotLeft, labelY,
+                                         slotRight - slotLeft, dbLabelHeight);
+
+            g.setColour (juce::Colours::whitesmoke);
+            g.setFont (juce::FontOptions (sf (9.0f)));
+            g.drawText (juce::String (labelDb, 1), dbRect,
+                        juce::Justification::centred, false);
+        }
     }
 }
 
 void IMDDisplay::drawProductBarsByHz (juce::Graphics& g,
                                       juce::Rectangle<int> plotArea,
                                       juce::Rectangle<int> labelGutterBottom,
-                                      const std::array<float, IMDMeasurement::kNumProducts>& ratios,
-                                      juce::Colour barColour)
+                                      int sourceIdx,
+                                      const juce::Array<SubBar>& visible,
+                                      ViewColours cols,
+                                      BarAxisConfig axis)
 {
-    constexpr float kMaxDb     =   0.0f;
-    constexpr float kMinDb     = -100.0f;
+    const float kMaxDb     = axis.axisMaxDb;
+    const float kMinDb     = axis.axisMinDb;
     constexpr float kViewMinHz =    20.0f;
     constexpr float kViewMaxHz = 20000.0f;
     const float     dbRange    = kMaxDb - kMinDb;
@@ -420,6 +578,12 @@ void IMDDisplay::drawProductBarsByHz (juce::Graphics& g,
         const float clampedFreq = juce::jlimit (kViewMinHz, kViewMaxHz, freq);
         const float t = (std::log10 (clampedFreq) - logMin) / logRange;
         return plotArea.getX() + juce::roundToInt (t * (float) plotArea.getWidth());
+    };
+
+    auto yForDb = [&] (float db) -> int
+    {
+        return plotArea.getY()
+             + juce::roundToInt ((1.0f - (db - kMinDb) / dbRange) * (float) plotArea.getHeight());
     };
 
     // Frequency axis labels along the bottom gutter (same anchor freqs
@@ -447,45 +611,138 @@ void IMDDisplay::drawProductBarsByHz (juce::Graphics& g,
     }
 
     const int numBars       = IMDMeasurement::kNumProducts;
-    const int barWidth      = sx (6);
     const int dbLabelHeight = sx (12);
     const int productLabelH = sx (10);
 
+    // ----- Diff mode: single bipolar bar per product at its Hz position --
+    if (axis.diffMode)
+    {
+        const int zeroY        = yForDb (0.0f);
+        const int diffBarWidth = sx (8);
+
+        for (int i = 0; i < numBars; ++i)
+        {
+            const float hz = displayed.L.valid
+                                ? displayed.L.productHz[(size_t) i]
+                                : displayed.R.productHz[(size_t) i];
+            if (hz < kViewMinHz || hz > kViewMaxHz) continue;
+
+            const float l = displayed.L.ratioDb[(size_t) sourceIdx][(size_t) i];
+            const float r = displayed.R.ratioDb[(size_t) sourceIdx][(size_t) i];
+            if (l <= IMDMeasurement::kNoMeasurementDb + 1.0f
+             || r <= IMDMeasurement::kNoMeasurementDb + 1.0f)
+                continue;
+
+            const float v       = r - l;
+            const int   centerX = freqToX (hz);
+            const int   slotLeft  = centerX - sx (24);
+            const int   slotRight = centerX + sx (24);
+            const int   vY      = yForDb (juce::jlimit (kMinDb, kMaxDb, v));
+            const int   barTop  = juce::jmin (zeroY, vY);
+            const int   barBot  = juce::jmax (zeroY, vY);
+            const int   barLeft = centerX - diffBarWidth / 2;
+
+            g.setColour (v >= 0.0f ? cols.R : cols.L);
+            g.fillRect (juce::Rectangle<int> (barLeft, barTop,
+                                              diffBarWidth,
+                                              juce::jmax (1, barBot - barTop)));
+
+            const int labelY = (v >= 0.0f)
+                ? juce::jmax (plotArea.getY() + sx (1), vY - dbLabelHeight - sx (1))
+                : juce::jmin (plotArea.getBottom() - dbLabelHeight, vY + sx (1));
+            juce::Rectangle<int> dbRect (slotLeft, labelY, slotRight - slotLeft, dbLabelHeight);
+            g.setColour (juce::Colours::whitesmoke);
+            g.setFont (juce::FontOptions (sf (9.0f)));
+            g.drawText ((v >= 0.0f ? "+" : "") + juce::String (v, 1), dbRect,
+                        juce::Justification::centred, false);
+
+            const int productLabelY = juce::jmax (plotArea.getY() + sx (1),
+                                                  labelY - productLabelH);
+            juce::Rectangle<int> productRect (slotLeft, productLabelY,
+                                              slotRight - slotLeft, productLabelH);
+            g.setColour (juce::Colours::grey);
+            g.setFont (juce::FontOptions (sf (8.0f)));
+            g.drawText (processor.imdMeasurement.getProductLabel (i), productRect,
+                        juce::Justification::centred, false);
+        }
+        return;
+    }
+
+    const int subBarWidth   = juce::jmax (2, sx (6) / juce::jmax (1, visible.size()));
+    const int subBarGap     = 1;
+
+    auto valueFor = [&] (char tag, int productIdx) -> float
+    {
+        const float l = displayed.L.ratioDb[(size_t) sourceIdx][(size_t) productIdx];
+        const float r = displayed.R.ratioDb[(size_t) sourceIdx][(size_t) productIdx];
+        switch (tag)
+        {
+            case 'L': return l;
+            case 'R': return r;
+        }
+        return IMDMeasurement::kNoMeasurementDb;
+    };
+
     for (int i = 0; i < numBars; ++i)
     {
-        const float ratioDb = ratios[(size_t) i];
-        const float hz      = processor.imdMeasurement.getProductHz (i);
+        // Use L's product Hz when available; fall back to R if L isn't valid.
+        const float hz = displayed.L.valid
+                            ? displayed.L.productHz[(size_t) i]
+                            : displayed.R.productHz[(size_t) i];
         if (hz < kViewMinHz || hz > kViewMaxHz) continue;
 
-        const int centerX = freqToX (hz);
+        const int centerX   = freqToX (hz);
         const int slotLeft  = centerX - sx (24);
         const int slotRight = centerX + sx (24);
 
-        if (ratioDb <= kMinDb + 0.5f
-            || ratioDb <= IMDMeasurement::kNoMeasurementDb + 1.0f) continue;
+        const int totalWidth = visible.size() * subBarWidth
+                             + juce::jmax (0, visible.size() - 1) * subBarGap;
+        int subX = centerX - totalWidth / 2;
 
-        const float t          = (juce::jlimit (kMinDb, kMaxDb, ratioDb) - kMinDb) / dbRange;
-        const int   barHeight  = juce::roundToInt (t * (float) plotArea.getHeight());
-        const int   barLeft    = centerX - barWidth / 2;
-        const int   barTop     = plotArea.getBottom() - barHeight;
+        float maxV = IMDMeasurement::kNoMeasurementDb;
+        for (auto& s : visible)
+        {
+            const float v = valueFor (s.tag, i);
+            if (v > maxV) maxV = v;
+        }
 
-        juce::Rectangle<int> bar (barLeft, barTop, barWidth, barHeight);
-        g.setColour (barColour);
-        g.fillRect (bar);
+        for (int sIdx = 0; sIdx < visible.size(); ++sIdx)
+        {
+            const auto& sb = visible.getReference (sIdx);
+            const float v  = valueFor (sb.tag, i);
+            if (v <= kMinDb + 0.5f || v <= IMDMeasurement::kNoMeasurementDb + 1.0f)
+            {
+                subX += subBarWidth + subBarGap;
+                continue;
+            }
 
-        // dB value above the bar.
+            const float t         = (juce::jlimit (kMinDb, kMaxDb, v) - kMinDb) / dbRange;
+            const int   barHeight = juce::roundToInt (t * (float) plotArea.getHeight());
+            const int   barTop    = plotArea.getBottom() - barHeight;
+
+            g.setColour (sb.colour);
+            g.fillRect (juce::Rectangle<int> (subX, barTop, subBarWidth, barHeight));
+
+            subX += subBarWidth + subBarGap;
+        }
+
+        if (maxV <= IMDMeasurement::kNoMeasurementDb + 1.0f) continue;
+
+        float labelDb = displayed.L.ratioDb[(size_t) sourceIdx][(size_t) i];
+        if (labelDb <= IMDMeasurement::kNoMeasurementDb + 1.0f)
+            labelDb = valueFor (visible.getReference (0).tag, i);
+
+        const float tMax       = (juce::jlimit (kMinDb, kMaxDb, maxV) - kMinDb) / dbRange;
+        const int   tallestTop = plotArea.getBottom() - juce::roundToInt (tMax * (float) plotArea.getHeight());
+
         const int dbLabelY = juce::jmax (plotArea.getY() + sx (1),
-                                         barTop - dbLabelHeight - sx (1));
+                                         tallestTop - dbLabelHeight - sx (1));
         juce::Rectangle<int> dbRect (slotLeft, dbLabelY, slotRight - slotLeft, dbLabelHeight);
         g.setColour (juce::Colours::whitesmoke);
         g.setFont (juce::FontOptions (sf (9.0f)));
-        g.drawText (juce::String (ratioDb, 1), dbRect,
+        g.drawText (juce::String (labelDb, 1), dbRect,
                     juce::Justification::centred, false);
 
-        // Product formula just below the dB value. Closely-spaced products
-        // will have overlapping labels - that's the inherent cost of
-        // frequency-positioned bars; users can switch to By Order for an
-        // uncluttered identification view.
         const int productLabelY = juce::jmax (plotArea.getY() + sx (1),
                                               dbLabelY - productLabelH);
         juce::Rectangle<int> productRect (slotLeft, productLabelY,

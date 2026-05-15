@@ -16,6 +16,7 @@
 #include "Analyses/IMDMeasurement.h"
 #include "Analyses/ImpulseResponse.h"
 #include "Analyses/FarinaIR.h"
+#include "Analyses/SweepCapture.h"
 
 //==============================================================================
 /**
@@ -65,11 +66,18 @@ public:
     //
     // preBusActive tracks whether the sidechain (pre-effect) input is wired;
     // the main (post-effect) input is always present when the plugin is running.
-    std::atomic<float> preEffectLevelDb  { -100.0f };
-    std::atomic<float> postEffectLevelDb { -100.0f };
-    std::atomic<float> preEffectPeakDb   { -100.0f };
-    std::atomic<float> postEffectPeakDb  { -100.0f };
-    std::atomic<bool>  preBusActive      { false };
+    // _R variants are right-channel levels; meters render L on the top half
+    // and R on the bottom half of each existing bar. When a bus is mono, R
+    // is sourced from channel 0 so both halves show the same data.
+    std::atomic<float> preEffectLevelDb    { -100.0f };
+    std::atomic<float> preEffectLevelDb_R  { -100.0f };
+    std::atomic<float> postEffectLevelDb   { -100.0f };
+    std::atomic<float> postEffectLevelDb_R { -100.0f };
+    std::atomic<float> preEffectPeakDb     { -100.0f };
+    std::atomic<float> preEffectPeakDb_R   { -100.0f };
+    std::atomic<float> postEffectPeakDb    { -100.0f };
+    std::atomic<float> postEffectPeakDb_R  { -100.0f };
+    std::atomic<bool>  preBusActive        { false };
 
     // Upper bound on pre-effect delay (samples). At 48 kHz this is ~340 ms,
     // generous for typical effect latencies including lookahead limiters and
@@ -107,8 +115,15 @@ public:
     // Magnitude in dB per bin, written by audio thread and read directly by
     // the editor. Direct reads can momentarily tear across bins; visually
     // imperceptible at 30 Hz repaint and not worth the cost of double buffering.
-    std::array<float, kSpectrumBins> preSpectrumDb  {};
-    std::array<float, kSpectrumBins> postSpectrumDb {};
+    //
+    // _R variants are the right-channel counterparts; existing analyses that
+    // only need a mono read continue using the bare names (which are
+    // semantically the L channel). Phase 1 stereo support feeds these
+    // per-channel; downstream analyses opt into R as they get stereo-aware.
+    std::array<float, kSpectrumBins> preSpectrumDb    {};
+    std::array<float, kSpectrumBins> preSpectrumDb_R  {};
+    std::array<float, kSpectrumBins> postSpectrumDb   {};
+    std::array<float, kSpectrumBins> postSpectrumDb_R {};
 
     // Increments each time a new spectrum frame is written. Available for the
     // editor if it ever wants to repaint only on fresh data.
@@ -164,6 +179,13 @@ public:
     // cleanly where discrete impulses can't.
     FarinaIR farinaIR;
 
+    // 2D capture across a sweep axis. Cross-cutting capability, not a
+    // mode of its own: when active (`sweepCaptureActive` APVTS bool),
+    // analyses that participate (FR for v1) record their per-frame
+    // output bucketed by the current `sweepPosition` APVTS value
+    // (DAW-automated, typically alongside WTSynth's WT Pos).
+    SweepCapture sweepCapture;
+
     // Sidecar JSON reader: parameter-source for analyses that need to
     // know exactly what test signal the script generated (PLANNING.md
     // section 2.5). Lives on the message thread; analyses snapshot the
@@ -217,9 +239,13 @@ private:
     };
 
     // Per-bus circular buffers holding the most recent kSpectrumFftSize samples
-    // of channel 0 of the delay-compensated pre and the post bus.
-    std::array<float, kSpectrumFftSize> spectrumPreBuffer  {};
-    std::array<float, kSpectrumFftSize> spectrumPostBuffer {};
+    // of each channel of the delay-compensated pre and the post bus. Mono
+    // sources fall back to channel 0 for both L and R, so a stereo plugin
+    // fed a mono signal still produces visible-on-screen overlap traces.
+    std::array<float, kSpectrumFftSize> spectrumPreBuffer    {};
+    std::array<float, kSpectrumFftSize> spectrumPreBuffer_R  {};
+    std::array<float, kSpectrumFftSize> spectrumPostBuffer   {};
+    std::array<float, kSpectrumFftSize> spectrumPostBuffer_R {};
 
     // Working buffer for the FFT: 2 * N floats because JUCE's real FFT writes
     // its output as interleaved complex pairs over the full buffer.

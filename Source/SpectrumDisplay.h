@@ -136,5 +136,11 @@ private:
 
     bool isAliasingHolding = false;
 
+    void renderSweepHeatmap (juce::Graphics& g,
+                             juce::Rectangle<int> plotArea,
+                             float viewMinFreq, float viewMaxFreq,
+                             float viewMinDb,   float viewMaxDb,
+                             float binFreqScale);
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectrumDisplay)
 };

@@ -32,9 +32,23 @@ private:
     int   sx (int   v) const noexcept { return juce::roundToInt ((float) v * uiScale); }
     float sf (float v) const noexcept { return v * uiScale; }
 
+    // Draws one stereo meter row: channel label on the left, L / R glyph
+    // indicators in a small gutter outside the bar's left edge, then the
+    // bar itself split in half vertically (L on top, R on bottom). The
+    // gradient is `colour` -> white inside each half so a single per-channel
+    // colour is all that needs to be specified for the whole meter family.
     void drawMeter (juce::Graphics& g, juce::Rectangle<int> row,
-                    const juce::String& label, juce::Colour labelColour,
-                    float db, bool active);
+                    const juce::String& label,
+                    juce::Colour lColour, juce::Colour rColour,
+                    float lDb, float rDb,
+                    bool lActive, bool rActive);
+
+    // Renders a `base -> white` gradient fill across one sub-bar based on
+    // the supplied dB level. Fully anchored across the bar's width so the
+    // colour at any horizontal position is independent of how far the fill
+    // currently extends.
+    void drawMeterHalf (juce::Graphics& g, juce::Rectangle<int> bar,
+                        juce::Colour colour, float db, bool active);
 
     // Labelled dB scale drawn between the post and pre meters; tick marks
     // line up vertically with the level positions in both bars.

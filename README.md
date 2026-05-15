@@ -26,9 +26,9 @@ Pre-alpha. Working analysis modes:
   Freeze capture controls.
 - **Aliasing Detection** - differential alias residue (off-grid added
   energy from the effect) peak-held across a sweep. Composite view shows
-  the input signal in amber and the added alias residue in green; Pre
-  and Post views are channel-only sanity checks. Hold and Clear apply
-  to the green trace.
+  the input signal in the pre-effect colour and the added alias residue
+  in the analysis colour; Pre and Post views are channel-only sanity
+  checks. Hold and Clear apply to the analysis trace.
 - **IMD Measurement** - intermodulation products from a two-tone input
   (orders 2 through 4, 12 products total). Differential IMD percent plus
   a per-product bar chart with By Order and By Hz layout toggle.
@@ -37,6 +37,8 @@ Pre-alpha. Working analysis modes:
   response by feeding actual discrete impulses. Threshold-triggered,
   multi-capture averaging, user-settable window length up to 120 seconds
   (long-tail reverbs). The first time-domain analysis in the suite.
+  Export... button saves the averaged IR as a 32-bit float stereo WAV
+  for drop-in use in any convolution reverb.
 - **Farina IR** - time-domain impulse response via log-sweep
   deconvolution. Sister to Direct Impulse IR - same display, different
   acquisition. User configures f0 / f1 / sweep / tail; clicks Capture;
@@ -44,7 +46,9 @@ Pre-alpha. Working analysis modes:
   against the mathematically-generated inverse-sweep filter, and
   displays the resulting IR. Buffer allocation and FFT setup are lazy
   (first Capture click pays the cost, subsequent captures with the
-  same params are instant).
+  same params are instant). Same Export... button as Direct Impulse IR
+  - the deconvolved IR saves as a 32-bit float stereo WAV ready for
+  any convolution reverb.
 
 Both IR modes are shipped but currently bottlenecked by WTSynth as a
 source: the wavetable cycling model produces an impulse train at
@@ -70,20 +74,69 @@ Supporting infrastructure:
   re-running the script picks up automatically). Caption text
   switches from generic mode advice to the actual loaded test-signal
   parameters when a sidecar is present.
-- Color semantics are fixed: amber = pre / input, cyan = post / output,
-  green = analysis result / "thing to fix."
+- Color semantics are fixed: warm red-orange = pre / input, periwinkle
+  violet = post / output, chartreuse = analysis result / "thing to
+  fix." Each master colour has an R-channel sibling in the same family
+  (amber for pre, cyan for post, green for analysis); the master (L)
+  is the bolder of the pair so it stays readable when R is layered on
+  top of it.
 - Fully responsive UI - the window is user-resizable and every element
   (controls, text, plot, axis labels) scales uniformly.
 
+Stereo support (shipped):
+
+- Every analysis mode runs per-channel. Pre and post buses are both
+  read as stereo; each analysis class (FrequencyResponse,
+  THDMeasurement, AliasingDetection, IMDMeasurement, ImpulseResponse,
+  FarinaIR) maintains independent L and R state and produces L, R,
+  and R-L (Diff) outputs.
+- Color scheme: L (master) is the bolder of each pair (warm red-orange
+  pre, periwinkle violet post, chartreuse analysis) so the master
+  identity stays readable when R is layered on top. R is the lighter
+  sibling in the same family (amber pre, cyan post, green analysis).
+- Display convention: in 1D trace modes (Generic Overlay, FR,
+  Aliasing, both IR modes) R draws first, L on top, Diff overlaid
+  additively in whitesmoke. In bar-chart modes (THD, IMD) each
+  category slot subdivides into paired L / R sub-bars with an
+  optional Diff sub-bar. Mono signals overlap pixel-for-pixel.
+- L / R / Diff toggle row at the right end of the cursor-readout
+  strip below the spectrum / panel. L and R are independent on/off
+  (at least one stays on); Diff is a separate additive toggle.
+- Inline stereo-imbalance readout in the same row, between cursor
+  readout and the toggles. Live per-mode summary - e.g.
+  "FR diff: +0.3 dB at 234 Hz", "THD diff: +0.03 pp",
+  "IR diff: max +0.0012" - so the user can see channel asymmetry
+  numerically without leaving the current mode.
+- Per-channel level meters: each existing pre and post bar splits
+  in half (L top, R bottom), with tiny L / R glyphs in the gutter
+  and a base-colour-to-white gradient.
+
 Not yet built:
 
+- **2D sweep capture for other modes** - currently only Frequency
+  Response writes into the SweepCapture buffer; THD / Aliasing /
+  IMD / Direct Impulse IR / Farina IR rollouts pending. Each
+  mode's heatmap uses its own X-axis category (harmonic, product,
+  time, freq) with a mode-specific colormap (bipolar for
+  FR/IR, monotonic for THD/IMD/Aliasing).
+- **Precision chart types**:
+  - *Parameter-sweep curves* (Plugin Doctor style 1D X-Y plots:
+    THD% / IMD% / FR-at-freq vs swept parameter).
+  - *Phase response + group delay* (companion charts to FR
+    magnitude).
+  - *Cumulative Spectral Decay (CSD)* waterfall.
+  - *Compression / dynamics transfer-function curve*.
+  - *Lissajous / goniometer + phase correlation meter* (depends
+    on stereo support).
 - Multisine flatness, step response, transfer function from noise.
-- Long-form sweep capture and 2D position plots.
-- Sidecar-driven parameter pre-fill for the analyses that take user-
-  configurable parameters (Farina, multisine, etc.).
-- WTGenerator companion plugin (see WTGENERATOR.md design doc) - 
-  purpose-built test-signal generator that resolves WTSynth's structural
-  limitations for IR / Farina / arbitrary-Hz two-tone testing.
+- **Sidecar-driven parameter pre-fill** - the SidecarReader
+  infrastructure exists but no analysis consumes its parameters
+  yet. Rolling out to all consuming modes (Farina, IMD, THD) in
+  one consistent sweep when those modes are feature-complete.
+- **WTGenerator companion plugin** (see WTGENERATOR.md design doc)
+  - purpose-built test-signal generator that resolves WTSynth's
+  structural limitations for IR / Farina / arbitrary-Hz two-tone
+  testing.
 
 ## How to use it
 

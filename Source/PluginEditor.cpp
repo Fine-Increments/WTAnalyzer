@@ -62,6 +62,10 @@ WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioP
 
     addAndMakeVisible (spectrumDisplay);
     addAndMakeVisible (cursorReadout);
+    addChildComponent (imbalanceReadout);
+    imbalanceReadout.setJustificationType (juce::Justification::centredLeft);
+    imbalanceReadout.setColour (juce::Label::textColourId, juce::Colours::grey);
+    imbalanceReadout.setInterceptsMouseClicks (false, false);
     addChildComponent (thdDisplay);     // hidden by default; applyAnalysisMode shows it
     addChildComponent (imdDisplay);
     addChildComponent (impulseDisplay);
@@ -95,6 +99,146 @@ WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioP
     helpButton.setButtonText ("?");
     helpButton.onClick = [this] { openHelpDialog(); };
 
+    // Sweep capture controls. Visibility is mode-driven below in
+    // applyAnalysisMode (visible only in FR mode). Engaged-state
+    // styling matches Hold/Freeze elsewhere.
+    const juce::Colour sweepEngagedFill (0xffcfd2d6);
+    addChildComponent (sweepCaptureButton);
+    sweepCaptureButton.setClickingTogglesState (true);
+    sweepCaptureButton.setColour (juce::TextButton::buttonOnColourId, sweepEngagedFill);
+    sweepCaptureButton.setColour (juce::TextButton::textColourOnId,   juce::Colours::black);
+    sweepCaptureAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
+        audioProcessor.apvts, "sweepCaptureActive", sweepCaptureButton);
+
+    addChildComponent (sweepClearButton);
+    sweepClearButton.onClick = [this]
+    {
+        audioProcessor.sweepCapture.reset();
+        repaint();
+    };
+
+    // Farina IR pair. Capture is momentary - it just arms the
+    // one-shot deconvolution trigger inside FarinaIR. Clear wipes
+    // the captured IR + state. Both share the same header slot as
+    // the FR sweep buttons; visibility swap is mode-driven below.
+    addChildComponent (farinaCaptureButton);
+    farinaCaptureButton.onClick = [this]
+    {
+        audioProcessor.farinaIR.requestCapture();
+        repaint();
+    };
+
+    addChildComponent (farinaClearButton);
+    farinaClearButton.onClick = [this]
+    {
+        audioProcessor.farinaIR.reset();
+        repaint();
+    };
+
+    // L / R / Diff toggle row. Same engaged-fill styling as Hold / Freeze /
+    // Capture so the toggle state is unambiguous. Visibility is mode-driven
+    // (set in applyAnalysisMode).
+    //
+    // Toggle semantics:
+    //   - Diff ON: exclusive view. L and R both turn off. Display shows a
+    //     bipolar (R - L) trace centered at zero, sign-coloured by which
+    //     channel is louder per bin/sample.
+    //   - Diff OFF: L and R are independent on/off toggles with the
+    //     at-least-one rule (turning off the last one auto-flips it back).
+    //   - Clicking L or R while Diff is on takes us back to that channel's
+    //     L/R view: Diff turns off, the clicked channel turns on, the other
+    //     stays off so the user sees a focused single-channel view.
+    const juce::Colour stereoEngagedFill (0xffcfd2d6);
+    auto styleToggle = [&] (juce::TextButton& b)
+    {
+        b.setClickingTogglesState (true);
+        b.setColour (juce::TextButton::buttonOnColourId, stereoEngagedFill);
+        b.setColour (juce::TextButton::textColourOnId,   juce::Colours::black);
+        addChildComponent (b);
+    };
+    styleToggle (stereoLButton);
+    styleToggle (stereoRButton);
+    styleToggle (stereoDiffButton);
+
+    stereoLAttachment    = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
+        audioProcessor.apvts, "showChannelL",    stereoLButton);
+    stereoRAttachment    = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
+        audioProcessor.apvts, "showChannelR",    stereoRButton);
+    stereoDiffAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
+        audioProcessor.apvts, "showChannelDiff", stereoDiffButton);
+
+    // Repaint everything that could be showing stereo data so a click
+    // takes effect immediately without waiting for the 30 Hz repaint timer.
+    auto repaintStereoConsumers = [this]
+    {
+        spectrumDisplay.repaint();
+        thdDisplay     .repaint();
+        imdDisplay     .repaint();
+        impulseDisplay .repaint();
+        farinaDisplay  .repaint();
+    };
+
+    // L clicked: post-click state is whatever the toggle now reports.
+    stereoLButton.onClick = [this, repaintStereoConsumers]
+    {
+        const bool lOn = stereoLButton.getToggleState();
+        const bool dOn = stereoDiffButton.getToggleState();
+
+        if (lOn && dOn)
+        {
+            // User just turned L on while Diff was active - leave Diff exclusive
+            // view, switch to L-only. R stays off.
+            stereoDiffButton.setToggleState (false, juce::sendNotification);
+            stereoRButton   .setToggleState (false, juce::sendNotification);
+        }
+        else if (! lOn && ! dOn)
+        {
+            // Turning L off with Diff off - enforce at-least-one of L/R.
+            const bool rOn = stereoRButton.getToggleState();
+            if (! rOn)
+                stereoLButton.setToggleState (true, juce::sendNotification);
+        }
+        repaintStereoConsumers();
+    };
+
+    stereoRButton.onClick = [this, repaintStereoConsumers]
+    {
+        const bool rOn = stereoRButton.getToggleState();
+        const bool dOn = stereoDiffButton.getToggleState();
+
+        if (rOn && dOn)
+        {
+            stereoDiffButton.setToggleState (false, juce::sendNotification);
+            stereoLButton   .setToggleState (false, juce::sendNotification);
+        }
+        else if (! rOn && ! dOn)
+        {
+            const bool lOn = stereoLButton.getToggleState();
+            if (! lOn)
+                stereoRButton.setToggleState (true, juce::sendNotification);
+        }
+        repaintStereoConsumers();
+    };
+
+    stereoDiffButton.onClick = [this, repaintStereoConsumers]
+    {
+        const bool dOn = stereoDiffButton.getToggleState();
+        if (dOn)
+        {
+            // Entering Diff exclusive view - turn off L and R.
+            stereoLButton.setToggleState (false, juce::sendNotification);
+            stereoRButton.setToggleState (false, juce::sendNotification);
+        }
+        else
+        {
+            // Leaving Diff - restore the default L+R view so the user
+            // isn't stuck with an empty display.
+            stereoLButton.setToggleState (true, juce::sendNotification);
+            stereoRButton.setToggleState (true, juce::sendNotification);
+        }
+        repaintStereoConsumers();
+    };
+
     setResizable (true, true);
     setResizeLimits (kMinWidth, kMinHeight, kMaxWidth, kMaxHeight);
     setSize (kBaseWidth, kBaseHeight);
@@ -103,7 +247,7 @@ WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioP
     // changes (from the ComboBox, host preset load, host automation). Cheap
     // poll - mode changes are infrequent so 10 Hz is plenty.
     applyAnalysisMode ((int) *audioProcessor.apvts.getRawParameterValue ("activeAnalysis"));
-    startTimerHz (10);
+    startTimerHz (30);
 }
 
 WTAnalyzerAudioProcessorEditor::~WTAnalyzerAudioProcessorEditor()
@@ -198,7 +342,22 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
                 "  Double-click in a gutter: resets just that axis.\n"
                 "  Double-click in the plot: resets both axes.\n"
                 "  Move the mouse over the plot: the cursor readout (bottom-left) shows\n"
-                "  the frequency and dB level under the pointer.\n";
+                "  the frequency and dB level under the pointer.\n\n"
+                "2D Sweep Capture\n"
+                "  Not applicable in this mode - there's no derived measurement to\n"
+                "  bucket across a sweep axis. The Sweep Position APVTS parameter\n"
+                "  has no effect here, and the Capture / Clear header buttons are\n"
+                "  hidden. Switch to Frequency Response if you want to see how the\n"
+                "  device's spectrum changes across a sweep dimension.\n\n"
+                "Stereo (L / R / Diff)\n"
+                "  Per-channel spectra are live. Pre = warm red-orange (L,\n"
+                "  master) + amber (R); post = periwinkle violet (L, master) +\n"
+                "  cyan (R). Mono signals overlap pixel-for-pixel and read as\n"
+                "  pure master colour. The L / R / Diff toggle row at the\n"
+                "  right end of the cursor-readout strip controls visibility\n"
+                "  (L and R are independent on/off, at least one must stay on).\n"
+                "  Diff (spectrum_R(f) - spectrum_L(f)) is not yet computed\n"
+                "  for Generic Overlay; the toggle is a no-op here today.\n";
 
         case Mode::FrequencyResponse:
             return
@@ -223,11 +382,48 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
                 "  as 'no measurement' and break the trace path. This prevents misleading\n"
                 "  spikes where pre is essentially silent and any post energy would\n"
                 "  divide to infinity.\n\n"
+                "2D Sweep Capture (signal-character axis)\n"
+                "  The Capture and Clear buttons in the plugin header (left of the\n"
+                "  Load Sidecar button) drive a 2D recorder. While Capture is on,\n"
+                "  every FFT frame's frequency response is bucketed into a 2D grid\n"
+                "  indexed by the 'Sweep Position' APVTS parameter (0..1,\n"
+                "  DAW-automatable). Route the same DAW automation lane to both\n"
+                "  WTSynth's WT Pos and WTAnalyzer's Sweep Position; as the wavetable\n"
+                "  morphs, the analyzer accumulates a heatmap of how the device responds\n"
+                "  at each spectral shape.\n\n"
+                "  Visual style: smooth heatmap (continuous X = log frequency, Y =\n"
+                "  sweep position 0..1). Colourmap is bipolar around 0 dB (the\n"
+                "  unity-gain anchor): black at -60 dB (heavy cut) -> green at 0 dB\n"
+                "  (transparent device) -> red at +12 dB (positive gain). 'No\n"
+                "  measurement' bins stay at the plot-area background colour so\n"
+                "  empty regions are visually distinct from measured-zero regions.\n"
+                "  A thin whitesmoke horizontal line marks the current sweepPosition\n"
+                "  ('you are here').\n\n"
+                "  Clear wipes the heatmap. Toggle Capture off to freeze the heatmap\n"
+                "  while continuing to view the live trace.\n\n"
+                "Stereo (L / R / Diff)\n"
+                "  FR is now per-channel. Chartreuse trace = L (master) FR,\n"
+                "  green trace = R FR. The L / R / Diff toggle row at the\n"
+                "  right end of the cursor-readout strip controls visibility.\n"
+                "  L and R are independent on/off (at least one must stay on);\n"
+                "  Diff is an additive whitesmoke overlay showing FR_R(f) -\n"
+                "  FR_L(f). A flat zero Diff line means the device is\n"
+                "  symmetric across channels; deviations reveal where L and R\n"
+                "  diverge in gain. Mono signals (channel 1 sources from\n"
+                "  channel 0) overlap pixel-for-pixel - L and R sit on top of\n"
+                "  each other and you see only the chartreuse master trace.\n"
+                "  In 2D heatmap mode (Capture on) the toggles will eventually\n"
+                "  pick which single channel's heatmap to render at full\n"
+                "  resolution; that L/R/Diff-aware heatmap variant is not\n"
+                "  wired yet (today the heatmap captures L only).\n\n"
                 "Tips\n"
                 "  - Time-align pre and post before measuring. Use the Latency panel to\n"
                 "    measure the device's latency and apply that delay to pre.\n"
                 "  - A 10+ second sweep gives the smoothest result with the most coverage.\n"
-                "    Very short sweeps leave the upper end under-resolved.\n";
+                "    Very short sweeps leave the upper end under-resolved.\n"
+                "  - For 2D sweep capture, a slow WT Pos automation (5-15 seconds across\n"
+                "    the full 0..1 range) gives enough frames per position bucket for a\n"
+                "    smooth heatmap.\n";
 
         case Mode::THDMeasurement:
             return
@@ -270,7 +466,31 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
                 "  - Minimum fundamental level is -30 dB FS. Below that the whole panel\n"
                 "    shows 'play a single sine tone' rather than reporting garbage.\n"
                 "  - For very tonal sources, h1 stays at 0 dB (the reference) and only\n"
-                "    h2+ tells you anything diagnostic.\n";
+                "    h2+ tells you anything diagnostic.\n\n"
+                "2D Sweep Capture\n"
+                "  Not yet implemented for this mode. The framework (Sweep Position\n"
+                "  parameter and header Capture / Clear buttons) is built but the\n"
+                "  Capture / Clear buttons are hidden outside Frequency Response.\n\n"
+                "  Visual style when added: tile grid (discrete X = harmonic index\n"
+                "  h1..h16 as chunky equal-width columns, Y = sweep position 0..1,\n"
+                "  colour = dB ratio). Colourmap is monotonic 'more is worse' since\n"
+                "  THD harmonics are always below the fundamental: black at -100 dB\n"
+                "  (clean) -> green at -40 dB (audible) -> red at -10 dB (severe).\n\n"
+                "  Typical use will be: route a DAW automation lane to both WTSynth's\n"
+                "  WT Pos and WTAnalyzer's Sweep Position, then read the heatmap as\n"
+                "  'which signal characters provoke the most distortion at each\n"
+                "  harmonic.'\n\n"
+                "Stereo (L / R / Diff)\n"
+                "  Per-channel THD is live. Each harmonic slot in the bar\n"
+                "  chart subdivides into paired sub-bars: L (master colour\n"
+                "  for the current view - chartreuse / red-orange / periwinkle)\n"
+                "  and R (the lighter same-family sibling). The L / R / Diff\n"
+                "  toggle row in the readout strip controls visibility: L and\n"
+                "  R are independent on/off (at least one must stay on); Diff\n"
+                "  adds a third whitesmoke sub-bar per harmonic showing\n"
+                "  THD_R_dB[h] - THD_L_dB[h]. The big header readout shows L\n"
+                "  THD% on top and R THD% below in their respective channel\n"
+                "  colours. Hold peak-holds each channel independently.\n";
 
         case Mode::AliasingDetection:
             return
@@ -310,7 +530,32 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
                 "    more.\n"
                 "  - WTSynth's own interpolation produces residual aliasing visible in\n"
                 "    Pre view. The differential subtracts this so the green is strictly\n"
-                "    the device's contribution.\n";
+                "    the device's contribution.\n\n"
+                "2D Sweep Capture\n"
+                "  Not yet implemented for this mode. The Hold/Clear inside the\n"
+                "  alias panel are a different feature (peak-hold across a single\n"
+                "  sweep at fixed parameter).\n\n"
+                "  Visual style when added: smooth heatmap (continuous X = log\n"
+                "  frequency, Y = sweep position 0..1, colour = alias residue dB FS).\n"
+                "  Colourmap is monotonic 'more is worse' since alias values are\n"
+                "  always at or below 0 dB FS: black at -100 dB FS (clean) -> green\n"
+                "  at -50 dB FS (moderate alias) -> red at -20 dB FS or higher\n"
+                "  (severe alias). 'No measurement' bins stay at the plot-area\n"
+                "  background.\n\n"
+                "  Typical use will be: route DAW automation to both WTSynth's WT\n"
+                "  Pos and WTAnalyzer's Sweep Position to see where in the audible\n"
+                "  band aliasing emerges as the input character morphs.\n\n"
+                "Stereo (L / R / Diff)\n"
+                "  Per-channel alias residue is live. Composite view shows the\n"
+                "  pre spectrum plus a per-channel alias trace: chartreuse (L,\n"
+                "  master) and green (R), with R drawn underneath and L on top.\n"
+                "  Diff (whitesmoke overlay) is alias_R(f) - alias_L(f). The\n"
+                "  L / R / Diff toggles in the cursor-readout strip control\n"
+                "  trace visibility (L and R independent on/off, at least one\n"
+                "  stays on). The peak-residue HUD in the top-right reports\n"
+                "  L and R on separate lines so you can see which channel is\n"
+                "  worse at a glance. Diff is useful for catching channel-\n"
+                "  specific oversampling bugs in stereo distortion plugins.\n";
 
         case Mode::IMDMeasurement:
             return
@@ -353,7 +598,28 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
                 "    pitch to reach high Hz pairs.\n"
                 "  - Symmetric clippers (Saturator Analog Clip / Soft Sine) produce\n"
                 "    primarily odd-order products. Asymmetric stages (tube biases) show\n"
-                "    strong even-order. Cross-check by toggling between modes.\n";
+                "    strong even-order. Cross-check by toggling between modes.\n\n"
+                "2D Sweep Capture\n"
+                "  Not yet implemented for this mode.\n\n"
+                "  Visual style when added: tile grid (discrete X = product index\n"
+                "  with formula labels - f1+f2, f1-f2, 2f1+f2, ... - in 12 chunky\n"
+                "  equal-width columns, ordered as in By Order layout. Y = sweep\n"
+                "  position 0..1, colour = dB ratio). Colourmap is monotonic 'more\n"
+                "  is worse': black at -100 dB (clean) -> green at -40 dB (audible)\n"
+                "  -> red at -10 dB (severe).\n\n"
+                "  Typical use will be: automate one source-side parameter (e.g.\n"
+                "  drive amount) alongside WTAnalyzer's Sweep Position to see which\n"
+                "  input conditions trigger the worst intermodulation per product.\n\n"
+                "Stereo (L / R / Diff)\n"
+                "  Per-channel IMD is live. Each product slot in the bar chart\n"
+                "  subdivides into paired sub-bars: L (master colour for the\n"
+                "  current view) and R (lighter sibling). The L / R / Diff\n"
+                "  toggle row in the readout strip controls visibility - L and\n"
+                "  R independent on/off (at least one stays on), Diff adds a\n"
+                "  whitesmoke sub-bar per product showing IMD_R_dB[p] -\n"
+                "  IMD_L_dB[p]. Header readout stacks L IMD% over R IMD% in\n"
+                "  their respective colours. Works the same in both By Order\n"
+                "  and By Hz layouts.\n";
 
         case Mode::DirectImpulseIR:
             return
@@ -383,7 +649,12 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
                 "          the device's tail length.\n"
                 "  Averages: number of impulses to average. Higher = lower noise floor\n"
                 "            in the captured IR but longer total test duration.\n"
-                "  Clear: wipe the running average. Press between tests.\n\n"
+                "  Clear: wipe the running average. Press between tests.\n"
+                "  Export...: save the averaged IR as a 32-bit float stereo WAV at\n"
+                "             the current sample rate. The file is drop-in compatible\n"
+                "             with any convolution reverb that accepts WAV IRs. Mono\n"
+                "             IRs (single-channel capture) are duplicated to both\n"
+                "             WAV channels for host compatibility.\n\n"
                 "How to read it\n"
                 "  Linear time on X (ms or s for longer windows), linear amplitude on Y\n"
                 "  centred at zero. The peak at t=0 is the device's instantaneous\n"
@@ -392,7 +663,32 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
                 "  - For short-tail effects (EQs, simple distortions), a 20-30 ms window\n"
                 "    works at most playback pitches.\n"
                 "  - For long-tail reverbs, set the window high and the playback pitch\n"
-                "    very low (or switch to Farina IR which doesn't have this problem).\n";
+                "    very low (or switch to Farina IR which doesn't have this problem).\n\n"
+                "2D Sweep Capture\n"
+                "  Not yet implemented for this mode.\n\n"
+                "  Visual style when added: waterfall plot (smooth, continuous X =\n"
+                "  time within the IR in ms, Y = sweep position 0..1, colour =\n"
+                "  signed IR amplitude). Colourmap is bipolar around zero since IR\n"
+                "  samples swing both positive and negative: deep blue at -1.0\n"
+                "  (large negative peak) -> black at 0 (silence) -> warm red at\n"
+                "  +1.0 (large positive peak). The Y axis runs bottom = position 0\n"
+                "  to top = position 1, so each horizontal stripe is one position's\n"
+                "  full IR.\n\n"
+                "  Typical use will be: route DAW automation to both a source-side\n"
+                "  parameter and WTAnalyzer's Sweep Position, then watch the IR\n"
+                "  morph across the sweep - useful for time-varying effects\n"
+                "  (modulation, dynamics with input-dependent behaviour, etc.).\n\n"
+                "Stereo (L / R / Diff)\n"
+                "  Per-channel IR is live. Each channel runs its own trigger\n"
+                "  detector, capture state machine, and incremental averager.\n"
+                "  The waveform plot overlays both traces with R drawn first\n"
+                "  (chartreuse), L on top (chartreuse-master) per the stereo\n"
+                "  convention - mono signals overlap pixel-for-pixel and read\n"
+                "  as pure master. The header readout shows separate L and R\n"
+                "  'captures averaged' counts so you can see if one channel\n"
+                "  is mis-triggering. Diff (whitesmoke overlay) shows IR_R(t)\n"
+                "  - IR_L(t) per sample - useful for stereo reverbs and any\n"
+                "  device with channel-dependent processing.\n";
 
         case Mode::FarinaIR:
             return
@@ -422,18 +718,28 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
                 "  uses these values to construct the inverse filter; mismatched\n"
                 "  parameters give a garbage IR.\n\n"
                 "Controls\n"
-                "  f0:    sweep start frequency in Hz.\n"
-                "  f1:    sweep end frequency in Hz.\n"
-                "  Sweep: sweep duration in seconds.\n"
+                "  f0:    sweep start frequency in Hz.    (in the Farina panel)\n"
+                "  f1:    sweep end frequency in Hz.      (in the Farina panel)\n"
+                "  Sweep: sweep duration in seconds.      (in the Farina panel)\n"
                 "  Tail:  additional capture time after the sweep ends; equals the\n"
                 "         length of the resulting IR. Set to cover the device's\n"
-                "         decay tail.\n"
+                "         decay tail. (in the Farina panel)\n"
                 "  Capture: arms the trigger. The audio thread watches pre for the\n"
                 "           sweep onset, then records for sweep + tail seconds. When\n"
                 "           the recording completes, the message thread deconvolves\n"
                 "           the post against the inverse sweep and the IR appears in\n"
-                "           the plot.\n"
-                "  Clear: wipes the captured IR. Click before re-arming a new capture.\n\n"
+                "           the plot.  (in the plugin header, left of the Load\n"
+                "           Sidecar button)\n"
+                "  Clear: wipes the captured IR. Click before re-arming a new\n"
+                "         capture.  (in the plugin header, left of the Load Sidecar\n"
+                "         button)\n"
+                "  Export...: save the deconvolved IR as a 32-bit float stereo WAV\n"
+                "             at the current sample rate. The file is drop-in\n"
+                "             compatible with any convolution reverb that accepts\n"
+                "             WAV IRs. Mono IRs (single-channel capture) are\n"
+                "             duplicated to both WAV channels. (top-right of the\n"
+                "             Farina panel, only effective after Status reads 'IR\n"
+                "             ready')\n\n"
                 "Status\n"
                 "  Idle:    no capture in progress; click Capture to arm.\n"
                 "  Waiting: pre threshold not yet crossed.\n"
@@ -449,7 +755,32 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
                 "    20 Hz to 20 kHz. For very long reverbs increase Tail.\n"
                 "  - The IR plot's Y axis auto-scales to peak; for short-tailed effects\n"
                 "    the peak at t=0 dominates and the tail looks small; zoom or use\n"
-                "    Clear + adjust parameters if you want to see the tail in detail.\n";
+                "    Clear + adjust parameters if you want to see the tail in detail.\n\n"
+                "2D Sweep Capture\n"
+                "  Not yet implemented for this mode. The Capture / Clear buttons\n"
+                "  in the header here trigger the Farina deconvolution itself - they\n"
+                "  are NOT the 2D sweep capture controls (those are FR-only today).\n\n"
+                "  Visual style when added: waterfall plot, identical to Direct\n"
+                "  Impulse IR's planned 2D view. Smooth heatmap with X = time\n"
+                "  within the IR (ms), Y = sweep position 0..1, colour = signed IR\n"
+                "  amplitude (bipolar: blue for large negatives, black at zero,\n"
+                "  red for large positives). Each horizontal stripe is one\n"
+                "  position's full IR.\n\n"
+                "  You'd run multiple Farina captures across automated source-side\n"
+                "  parameter values to map how the IR shape changes with signal\n"
+                "  character.\n\n"
+                "Stereo (L / R / Diff)\n"
+                "  Per-channel Farina IR is live. Each channel runs its own\n"
+                "  trigger and capture; both channels deconvolve against the\n"
+                "  same mathematically-generated inverse-sweep filter (the\n"
+                "  filter is parameter-driven, not signal-driven, so it is\n"
+                "  identical for L and R). Resulting IRs overlay with R\n"
+                "  drawn first, L on top (chartreuse master). The L / R /\n"
+                "  Diff toggle row in the readout strip controls visibility -\n"
+                "  L and R independent on/off (at least one stays on), Diff\n"
+                "  is a whitesmoke overlay of IR_R(t) - IR_L(t) per sample.\n"
+                "  Diff exposes channel-specific reverb decay or modulation\n"
+                "  behaviour.\n";
     }
     return "No help available for this mode.";
 }
@@ -460,6 +791,192 @@ void WTAnalyzerAudioProcessorEditor::timerCallback()
     const int current = (int) *audioProcessor.apvts.getRawParameterValue ("activeAnalysis");
     if (current != lastAppliedAnalysisMode)
         applyAnalysisMode (current);
+
+    updateImbalanceReadout();
+}
+
+void WTAnalyzerAudioProcessorEditor::updateImbalanceReadout()
+{
+    if (! imbalanceReadout.isVisible()) return;
+
+    // In Diff mode the trace itself already shows the asymmetry visually,
+    // but the numerical summary stays useful for screenshots / reports
+    // and for the L+R views where the diff isn't drawn.
+    imbalanceReadout.setText (computeImbalanceText(), juce::dontSendNotification);
+}
+
+juce::String WTAnalyzerAudioProcessorEditor::computeImbalanceText() const
+{
+    using Mode = WTAnalyzerAudioProcessor::AnalysisMode;
+    const int mode = (int) *audioProcessor.apvts.getRawParameterValue ("activeAnalysis");
+
+    auto formatHz = [] (float hz) -> juce::String
+    {
+        if (hz < 1000.0f)  return juce::String ((int) std::round (hz)) + " Hz";
+        if (hz < 10000.0f) return juce::String (hz / 1000.0f, 2) + " kHz";
+        return juce::String (hz / 1000.0f, 1) + " kHz";
+    };
+
+    auto signed1 = [] (float v) -> juce::String
+    {
+        return (v >= 0.0f ? juce::String ("+") : juce::String()) + juce::String (v, 1);
+    };
+    auto signed3 = [] (float v) -> juce::String
+    {
+        return (v >= 0.0f ? juce::String ("+") : juce::String()) + juce::String (v, 3);
+    };
+    auto signed4 = [] (float v) -> juce::String
+    {
+        return (v >= 0.0f ? juce::String ("+") : juce::String()) + juce::String (v, 4);
+    };
+
+    const float sr = audioProcessor.currentSampleRate.load (std::memory_order_relaxed);
+    const float binFreqScale = sr / (float) WTAnalyzerAudioProcessor::kSpectrumFftSize;
+    constexpr float kMinHz = 20.0f, kMaxHz = 20000.0f;
+    constexpr float kNoiseFloorDb = -80.0f;
+
+    // Helper: scan two spectra and return (max signed diff, its Hz).
+    auto spectrumDiffPeak = [&] (const std::array<float, WTAnalyzerAudioProcessor::kSpectrumBins>& specL,
+                                 const std::array<float, WTAnalyzerAudioProcessor::kSpectrumBins>& specR,
+                                 float& outAbs, float& outSigned, float& outHz)
+    {
+        outAbs = 0.0f; outSigned = 0.0f; outHz = 0.0f;
+        for (int bin = 1; bin < (int) specL.size(); ++bin)
+        {
+            const float hz = (float) bin * binFreqScale;
+            if (hz < kMinHz) continue;
+            if (hz > kMaxHz) break;
+            // Skip bins where both channels are below the noise floor -
+            // diff is meaningless ratio of two near-zero levels.
+            if (specL[bin] < kNoiseFloorDb && specR[bin] < kNoiseFloorDb) continue;
+
+            const float d = specR[bin] - specL[bin];
+            const float a = std::abs (d);
+            if (a > outAbs) { outAbs = a; outSigned = d; outHz = hz; }
+        }
+    };
+
+    // Helper: scan a sparse diff array (uses sentinel for no-measurement bins).
+    auto sparseDiffPeak = [&] (const float* diff, int count, float sentinelFloor,
+                               float& outAbs, float& outSigned, float& outHz)
+    {
+        outAbs = 0.0f; outSigned = 0.0f; outHz = 0.0f;
+        for (int bin = 1; bin < count; ++bin)
+        {
+            const float v = diff[bin];
+            if (v <= sentinelFloor + 0.5f) continue;
+            const float a = std::abs (v);
+            if (a > outAbs)
+            {
+                outAbs = a; outSigned = v;
+                outHz = (float) bin * binFreqScale;
+            }
+        }
+    };
+
+    switch (mode)
+    {
+        case (int) Mode::GenericOverlay:
+        {
+            float a, s, hz;
+            spectrumDiffPeak (audioProcessor.postSpectrumDb,
+                              audioProcessor.postSpectrumDb_R, a, s, hz);
+            if (a < 0.05f) return "post diff: balanced";
+            return "post diff: " + signed1 (s) + " dB at " + formatHz (hz);
+        }
+
+        case (int) Mode::FrequencyResponse:
+        {
+            const auto& diff = audioProcessor.frequencyResponse.getResponseDb_Diff();
+            float a, s, hz;
+            sparseDiffPeak (diff.data(), (int) diff.size(),
+                            FrequencyResponse::kNoMeasurementDb, a, s, hz);
+            if (a == 0.0f) return "FR diff: no measurement";
+            if (a < 0.05f) return "FR diff: balanced";
+            return "FR diff: " + signed1 (s) + " dB at " + formatHz (hz);
+        }
+
+        case (int) Mode::AliasingDetection:
+        {
+            // Use peak-held diff so the readout follows the same
+            // "accumulate across a sweep" semantics as the trace.
+            const auto& diff = audioProcessor.aliasingDetection.getPeakDifferentialDb_Diff();
+            float a, s, hz;
+            sparseDiffPeak (diff.data(), (int) diff.size(),
+                            AliasingDetection::kNoMeasurementDb, a, s, hz);
+            if (a == 0.0f) return "alias diff: no measurement";
+            if (a < 0.05f) return "alias diff: balanced";
+            return "alias diff: " + signed1 (s) + " dB at " + formatHz (hz);
+        }
+
+        case (int) Mode::THDMeasurement:
+        {
+            const auto& thd = audioProcessor.thdMeasurement;
+            const bool vL = thd.isValid (THDMeasurement::Channel::L);
+            const bool vR = thd.isValid (THDMeasurement::Channel::R);
+            if (! vL && ! vR) return "THD diff: no signal";
+            const float l = thd.getTotalThdPercent (THDMeasurement::Channel::L);
+            const float r = thd.getTotalThdPercent (THDMeasurement::Channel::R);
+            return "THD diff: " + signed3 (r - l) + " pp";
+        }
+
+        case (int) Mode::IMDMeasurement:
+        {
+            const auto& imd = audioProcessor.imdMeasurement;
+            const bool vL = imd.isValid (IMDMeasurement::Channel::L);
+            const bool vR = imd.isValid (IMDMeasurement::Channel::R);
+            if (! vL && ! vR) return "IMD diff: no signal";
+            const float l = imd.getTotalImdPercent (IMDMeasurement::Channel::L);
+            const float r = imd.getTotalImdPercent (IMDMeasurement::Channel::R);
+            return "IMD diff: " + signed3 (r - l) + " pp";
+        }
+
+        case (int) Mode::DirectImpulseIR:
+        {
+            const auto& ir = audioProcessor.impulseResponse;
+            const int nL = ir.getDisplayLength (ImpulseResponse::Channel::L);
+            const int nR = ir.getDisplayLength (ImpulseResponse::Channel::R);
+            const int n  = juce::jmin (nL, nR);
+            if (n <= 0) return "IR diff: no capture";
+
+            const auto& bufL = ir.getAveragedBuffer (ImpulseResponse::Channel::L);
+            const auto& bufR = ir.getAveragedBuffer (ImpulseResponse::Channel::R);
+
+            // Stride for long IRs so we never iterate more than ~100k
+            // samples per tick. Peaks in averaged IRs are wide enough
+            // that this gives a faithful max-abs reading.
+            const int stride = juce::jmax (1, n / 100000);
+            float maxAbs = 0.0f, maxSigned = 0.0f;
+            for (int i = 0; i < n; i += stride)
+            {
+                const float d = bufR[(size_t) i] - bufL[(size_t) i];
+                if (std::abs (d) > maxAbs) { maxAbs = std::abs (d); maxSigned = d; }
+            }
+            return "IR diff: max " + signed4 (maxSigned);
+        }
+
+        case (int) Mode::FarinaIR:
+        {
+            const auto& f = audioProcessor.farinaIR;
+            const int nL = f.getIRLength (FarinaIR::Channel::L);
+            const int nR = f.getIRLength (FarinaIR::Channel::R);
+            const int n  = juce::jmin (nL, nR);
+            if (n <= 0) return "IR diff: no capture";
+
+            const auto& bufL = f.getIR (FarinaIR::Channel::L);
+            const auto& bufR = f.getIR (FarinaIR::Channel::R);
+
+            const int stride = juce::jmax (1, n / 100000);
+            float maxAbs = 0.0f, maxSigned = 0.0f;
+            for (int i = 0; i < n; i += stride)
+            {
+                const float d = bufR[(size_t) i] - bufL[(size_t) i];
+                if (std::abs (d) > maxAbs) { maxAbs = std::abs (d); maxSigned = d; }
+            }
+            return "IR diff: max " + signed4 (maxSigned);
+        }
+    }
+    return {};
 }
 
 void WTAnalyzerAudioProcessorEditor::applyAnalysisMode (int modeIndex)
@@ -487,6 +1004,27 @@ void WTAnalyzerAudioProcessorEditor::applyAnalysisMode (int modeIndex)
     // is mode-driven from the editor.
     spectrumDisplay.setAliasingViewButtonsVisible (modeIndex == (int) Mode::AliasingDetection);
 
+    // Capture / Clear in the header swap between FR sweep recorder and
+    // Farina IR one-shot trigger based on the active mode.
+    const bool isFRMode     = (modeIndex == (int) Mode::FrequencyResponse);
+    const bool isFarinaMode = (modeIndex == (int) Mode::FarinaIR);
+    sweepCaptureButton .setVisible (isFRMode);
+    sweepClearButton   .setVisible (isFRMode);
+    farinaCaptureButton.setVisible (isFarinaMode);
+    farinaClearButton  .setVisible (isFarinaMode);
+
+    // L / R / Diff toggles: visible in every mode that participates in
+    // stereo display today. Modes with dedicated panels (THD, IMD, IR,
+    // Farina) consume the same shared APVTS params - the toggle row
+    // stays in the readout strip and the panel-specific display reads
+    // the same flags.
+    const bool wantsStereoToggles = wantsSpectrumPath || wantsThdPath
+                                  || wantsImdPath || wantsIrPath || wantsFarinaPath;
+    stereoLButton    .setVisible (wantsStereoToggles);
+    stereoRButton    .setVisible (wantsStereoToggles);
+    stereoDiffButton .setVisible (wantsStereoToggles);
+    imbalanceReadout .setVisible (wantsStereoToggles);
+
     repaint();
 }
 
@@ -496,12 +1034,12 @@ void WTAnalyzerAudioProcessorEditor::paint (juce::Graphics& g)
     g.fillAll (juce::Colour (0xff202225));
 
     // Title: drawn in the header row, with space reserved on the right
-    // for the sidecar button, analysis selector, and help button (all
-    // positioned by resized()).
+    // for the sweep capture/clear buttons, sidecar button, analysis
+    // selector, and help button (all positioned by resized()).
     auto bounds = getLocalBounds().reduced (sx (16));
     auto headerRow = bounds.removeFromTop (sx (24));
 
-    headerRow.removeFromRight (sx (180) + sx (8) + sx (200) + sx (8) + sx (30) + sx (8));
+    headerRow.removeFromRight (sx (62) + sx (4) + sx (50) + sx (8) + sx (130) + sx (8) + sx (200) + sx (8) + sx (30) + sx (8));
 
     g.setColour (juce::Colours::whitesmoke);
     g.setFont (juce::FontOptions (sf (16.0f)));
@@ -524,15 +1062,28 @@ void WTAnalyzerAudioProcessorEditor::resized()
     auto bounds = getLocalBounds().reduced (sx (16));
 
     // Header row: title (drawn by paint()) on the left, then right-to-left:
-    // help button, analysis selector, sidecar button. Help is the rightmost
-    // anchor so the eye lands on it when seeking instructions; selector and
-    // sidecar shift left to accommodate.
+    // help, mode selector, sidecar, clear, capture. Capture / Clear are
+    // mode-driven (visible only in FR mode) so they leave a gap in other
+    // modes - the rest of the header layout stays put.
     auto headerRow = bounds.removeFromTop (sx (24));
-    helpButton.setBounds (headerRow.removeFromRight (sx (30)));
+    helpButton      .setBounds (headerRow.removeFromRight (sx (30)));
     headerRow.removeFromRight (sx (8));
     analysisSelector.setBounds (headerRow.removeFromRight (sx (200)));
     headerRow.removeFromRight (sx (8));
-    sidecarButton.setBounds (headerRow.removeFromRight (sx (180)));
+    sidecarButton   .setBounds (headerRow.removeFromRight (sx (130)));
+    headerRow.removeFromRight (sx (8));
+    // FR and Farina Capture / Clear pairs share the same physical slot;
+    // only one mode's pair is visible at a time so the overlap is fine.
+    {
+        auto clearRect   = headerRow.removeFromRight (sx (50));
+        headerRow.removeFromRight (sx (4));
+        auto captureRect = headerRow.removeFromRight (sx (62));
+
+        sweepClearButton    .setBounds (clearRect);
+        sweepCaptureButton  .setBounds (captureRect);
+        farinaClearButton   .setBounds (clearRect);
+        farinaCaptureButton .setBounds (captureRect);
+    }
 
     bounds.removeFromTop (sx (8));
 
@@ -544,10 +1095,29 @@ void WTAnalyzerAudioProcessorEditor::resized()
     levelMetersPanel.setBounds (bounds.removeFromBottom (metersHeight));
 
     // Readout strip between spectrum and meters: cursor readout on the
-    // left, nothing else (the inline caption that used to share this
-    // strip was replaced by the Help popup in the header).
+    // left, inline stereo-imbalance readout in the middle, L / R / Diff
+    // stereo toggles on the right (per the feedback-stereo-lr-diff-
+    // convention memory - lives in the same row as the cursor x/y readout,
+    // not inside the plot area).
     auto readoutStrip = bounds.removeFromBottom (sx (18));
     cursorReadout.setBounds (readoutStrip.removeFromLeft (sx (220)));
+
+    {
+        auto stereoRow = readoutStrip.removeFromRight (sx (30) + sx (4) + sx (30) + sx (4) + sx (40));
+        stereoDiffButton.setBounds (stereoRow.removeFromRight (sx (40)));
+        stereoRow.removeFromRight (sx (4));
+        stereoRButton.setBounds (stereoRow.removeFromRight (sx (30)));
+        stereoRow.removeFromRight (sx (4));
+        stereoLButton.setBounds (stereoRow.removeFromRight (sx (30)));
+    }
+
+    // What's left of readoutStrip is the middle gap between cursor and
+    // toggles. The imbalance readout fills it with a small left pad.
+    readoutStrip.removeFromLeft (sx (8));
+    readoutStrip.removeFromRight (sx (8));
+    imbalanceReadout.setBounds (readoutStrip);
+    imbalanceReadout.setFont (juce::FontOptions (sf (11.0f)));
+
     bounds.removeFromBottom (sx (4));
 
     // Spectrum, THD, IMD, IR and Farina share the same rect; visibility decides which is drawn.

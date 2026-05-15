@@ -136,6 +136,43 @@ WTAnalyzerAudioProcessor::createParameterLayout()
         juce::NormalisableRange<float> (FarinaIR::kMinTailSec, FarinaIR::kMaxTailSec, 0.0f, 0.5f),
         FarinaIR::kDefaultTailSec));
 
+    // 2D sweep capture across signal-character / parameter axes.
+    // sweepPosition is the DAW-automatable lane; the user routes the
+    // same automation to this AND to WTSynth's WT Pos (or whatever the
+    // source plugin's swept parameter is). When sweepCaptureActive is
+    // true, the FrequencyResponse analysis writes its per-bin output
+    // into a 2D buffer bucketed by sweepPosition.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "sweepPosition", 1 },
+        "Sweep Position",
+        juce::NormalisableRange<float> (0.0f, 1.0f),
+        0.0f));
+
+    layout.add (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { "sweepCaptureActive", 1 },
+        "Sweep Capture Active",
+        false));
+
+    // Stereo display toggles - one set shared across every mode that
+    // participates in the L / R / Diff convention (PLANNING.md 8.5.1).
+    // L and R are independent on/off; at least one must stay on
+    // (enforced in the editor). Diff is a separate additive overlay.
+    // Defaults: L on, R on, Diff off.
+    layout.add (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { "showChannelL", 1 },
+        "Show L Channel",
+        true));
+
+    layout.add (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { "showChannelR", 1 },
+        "Show R Channel",
+        true));
+
+    layout.add (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { "showChannelDiff", 1 },
+        "Show Diff Overlay",
+        false));
+
     return layout;
 }
 
@@ -222,12 +259,16 @@ void WTAnalyzerAudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
     xcorrRingPos = 0;
 
     currentSampleRate.store ((float) sampleRate, std::memory_order_relaxed);
-    spectrumPreBuffer.fill (0.0f);
-    spectrumPostBuffer.fill (0.0f);
+    spectrumPreBuffer    .fill (0.0f);
+    spectrumPreBuffer_R  .fill (0.0f);
+    spectrumPostBuffer   .fill (0.0f);
+    spectrumPostBuffer_R .fill (0.0f);
     spectrumWritePos = 0;
     samplesSinceLastSpectrumFft = 0;
-    preSpectrumDb.fill (-120.0f);
-    postSpectrumDb.fill (-120.0f);
+    preSpectrumDb    .fill (-120.0f);
+    preSpectrumDb_R  .fill (-120.0f);
+    postSpectrumDb   .fill (-120.0f);
+    postSpectrumDb_R .fill (-120.0f);
 
     frequencyResponse.prepare (kSpectrumBins);
 
@@ -244,6 +285,8 @@ void WTAnalyzerAudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
                              *apvts.getRawParameterValue ("farinaF1Hz"),
                              *apvts.getRawParameterValue ("farinaSweepSec"),
                              *apvts.getRawParameterValue ("farinaTailSec"));
+
+    sweepCapture.prepare (kSpectrumBins);
 
     lastActiveAnalysisIndex = (int) *apvts.getRawParameterValue ("activeAnalysis");
 }
@@ -301,8 +344,10 @@ void WTAnalyzerAudioProcessor::runSpectrumFft()
                                                             -120.0f);
     };
 
-    fftOne (spectrumPreBuffer,  preSpectrumDb);
-    fftOne (spectrumPostBuffer, postSpectrumDb);
+    fftOne (spectrumPreBuffer,    preSpectrumDb);     // L
+    fftOne (spectrumPostBuffer,   postSpectrumDb);    // L
+    fftOne (spectrumPreBuffer_R,  preSpectrumDb_R);   // R
+    fftOne (spectrumPostBuffer_R, postSpectrumDb_R);  // R
 
     // Drive the active analysis from the same spectrum data. Selective
     // execution per PRINCIPLES.md section 9: only the active analysis runs.
@@ -322,13 +367,31 @@ void WTAnalyzerAudioProcessor::runSpectrumFft()
     }
 
     if (activeIndex == (int) AnalysisMode::FrequencyResponse)
-        frequencyResponse.update (preSpectrumDb.data(), postSpectrumDb.data());
+    {
+        frequencyResponse.update (preSpectrumDb  .data(), postSpectrumDb  .data(),
+                                  preSpectrumDb_R.data(), postSpectrumDb_R.data());
+
+        // Optional 2D sweep capture: when armed, drop the current FR
+        // trace into the SweepCapture bucket corresponding to the
+        // current sweepPosition APVTS value. Cheap (~kSpectrumBins
+        // float copies per spectrum hop, ~47 Hz at 48 kHz).
+        if (*apvts.getRawParameterValue ("sweepCaptureActive") > 0.5f)
+        {
+            const float position = *apvts.getRawParameterValue ("sweepPosition");
+            sweepCapture.captureFrame (position,
+                                       frequencyResponse.getResponseDb().data(),
+                                       frequencyResponse.getNumBins());
+        }
+    }
     else if (activeIndex == (int) AnalysisMode::THDMeasurement)
-        thdMeasurement.update (preSpectrumDb.data(), postSpectrumDb.data());
+        thdMeasurement.update (preSpectrumDb  .data(), postSpectrumDb  .data(),
+                               preSpectrumDb_R.data(), postSpectrumDb_R.data());
     else if (activeIndex == (int) AnalysisMode::AliasingDetection)
-        aliasingDetection.update (preSpectrumDb.data(), postSpectrumDb.data());
+        aliasingDetection.update (preSpectrumDb  .data(), postSpectrumDb  .data(),
+                                  preSpectrumDb_R.data(), postSpectrumDb_R.data());
     else if (activeIndex == (int) AnalysisMode::IMDMeasurement)
-        imdMeasurement.update (preSpectrumDb.data(), postSpectrumDb.data());
+        imdMeasurement.update (preSpectrumDb  .data(), postSpectrumDb  .data(),
+                               preSpectrumDb_R.data(), postSpectrumDb_R.data());
 
     spectrumFrameCount.fetch_add (1, std::memory_order_release);
 }
@@ -475,12 +538,21 @@ void WTAnalyzerAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
         return juce::Decibels::gainToDecibels (gain, -100.0f);
     };
 
-    if (postBus.getNumChannels() > 0)
+    const int postChans = postBus.getNumChannels();
+    const int preChans  = preActive ? preBus.getNumChannels() : 0;
+
+    if (postChans > 0)
     {
         postEffectLevelDb.store (gainToDb (postBus.getRMSLevel  (0, 0, numSamples)),
                                  std::memory_order_relaxed);
         postEffectPeakDb .store (gainToDb (postBus.getMagnitude (0, 0, numSamples)),
                                  std::memory_order_relaxed);
+
+        const int rIdx = postChans > 1 ? 1 : 0;
+        postEffectLevelDb_R.store (gainToDb (postBus.getRMSLevel  (rIdx, 0, numSamples)),
+                                   std::memory_order_relaxed);
+        postEffectPeakDb_R .store (gainToDb (postBus.getMagnitude (rIdx, 0, numSamples)),
+                                   std::memory_order_relaxed);
     }
 
     if (preActive)
@@ -489,11 +561,19 @@ void WTAnalyzerAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                                 std::memory_order_relaxed);
         preEffectPeakDb .store (gainToDb (preBus.getMagnitude (0, 0, numSamples)),
                                 std::memory_order_relaxed);
+
+        const int rIdx = preChans > 1 ? 1 : 0;
+        preEffectLevelDb_R.store (gainToDb (preBus.getRMSLevel  (rIdx, 0, numSamples)),
+                                  std::memory_order_relaxed);
+        preEffectPeakDb_R .store (gainToDb (preBus.getMagnitude (rIdx, 0, numSamples)),
+                                  std::memory_order_relaxed);
     }
     else
     {
-        preEffectLevelDb.store (-100.0f, std::memory_order_relaxed);
-        preEffectPeakDb .store (-100.0f, std::memory_order_relaxed);
+        preEffectLevelDb  .store (-100.0f, std::memory_order_relaxed);
+        preEffectPeakDb   .store (-100.0f, std::memory_order_relaxed);
+        preEffectLevelDb_R.store (-100.0f, std::memory_order_relaxed);
+        preEffectPeakDb_R .store (-100.0f, std::memory_order_relaxed);
     }
 
     // Spectrum overlay: stream channel 0 of the (delay-compensated) pre and
@@ -520,10 +600,20 @@ void WTAnalyzerAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
         const float* preCh0  = preActive ? preBus.getReadPointer (0) : nullptr;
         const float* postCh0 = postBus.getReadPointer (0);
 
+        // Right-channel pointers; fall back to channel 0 when the bus is
+        // mono (or sidechain is mono) so a mono signal through a stereo
+        // plugin still feeds both L and R streams with identical samples.
+        const float* preCh1  = (preActive && preBus.getNumChannels() > 1)
+                                 ? preBus.getReadPointer (1) : preCh0;
+        const float* postCh1 = (postBus.getNumChannels() > 1)
+                                 ? postBus.getReadPointer (1) : postCh0;
+
         for (int n = 0; n < numSamples; ++n)
         {
-            spectrumPostBuffer[spectrumWritePos] = postCh0[n];
-            spectrumPreBuffer [spectrumWritePos] = preCh0 ? preCh0[n] : 0.0f;
+            spectrumPostBuffer   [spectrumWritePos] = postCh0[n];
+            spectrumPostBuffer_R [spectrumWritePos] = postCh1[n];
+            spectrumPreBuffer    [spectrumWritePos] = preCh0 ? preCh0[n] : 0.0f;
+            spectrumPreBuffer_R  [spectrumWritePos] = preCh1 ? preCh1[n] : 0.0f;
 
             if (++spectrumWritePos >= kSpectrumFftSize)
                 spectrumWritePos = 0;
@@ -535,10 +625,12 @@ void WTAnalyzerAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
             }
 
             if (irActive)
-                impulseResponse.processSample (preCh0 ? preCh0[n] : 0.0f, postCh0[n]);
+                impulseResponse.processSample (preCh0 ? preCh0[n] : 0.0f, postCh0[n],
+                                               preCh1 ? preCh1[n] : 0.0f, postCh1[n]);
 
             if (farinaActive)
-                farinaIR.processSample (preCh0 ? preCh0[n] : 0.0f, postCh0[n]);
+                farinaIR.processSample (preCh0 ? preCh0[n] : 0.0f, postCh0[n],
+                                        preCh1 ? preCh1[n] : 0.0f, postCh1[n]);
         }
     }
 
