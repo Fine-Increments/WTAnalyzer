@@ -53,6 +53,10 @@
             file="Source/PhaseDisplay.cpp"/>
       <FILE id="PhDp02" name="PhaseDisplay.h" compile="0" resource="0"
             file="Source/PhaseDisplay.h"/>
+      <FILE id="CSDv01" name="CSDView.cpp" compile="1" resource="0"
+            file="Source/CSDView.cpp"/>
+      <FILE id="CSDv02" name="CSDView.h" compile="0" resource="0"
+            file="Source/CSDView.h"/>
       <FILE id="Side01" name="SidecarReader.cpp" compile="1" resource="0"
             file="Source/SidecarReader.cpp"/>
       <FILE id="Side02" name="SidecarReader.h" compile="0" resource="0"
@@ -106,6 +110,10 @@
               file="Source/Analyses/PhaseResponse.cpp"/>
         <FILE id="PhRs02" name="PhaseResponse.h" compile="0" resource="0"
               file="Source/Analyses/PhaseResponse.h"/>
+        <FILE id="CSDa01" name="CSD.cpp" compile="1" resource="0"
+              file="Source/Analyses/CSD.cpp"/>
+        <FILE id="CSDa02" name="CSD.h" compile="0" resource="0"
+              file="Source/Analyses/CSD.h"/>
       </GROUP>
     </GROUP>
   </MAINGROUP>

@@ -49,6 +49,14 @@ Pre-alpha. Working analysis modes:
   same params are instant). Same Export... button as Direct Impulse IR
   - the deconvolved IR saves as a 32-bit float stereo WAV ready for
   any convolution reverb.
+- **CSD (Cumulative Spectral Decay)** - a sub-view of both IR modes,
+  reached by a Waveform / CSD Heatmap / CSD 3D selector above the
+  plot. The CSD shows how each frequency of the captured IR decays
+  over time: a resonance lingers as a ridge while the rest drops
+  away. A short window is slid along the IR and FFT'd at each
+  position to build a time/frequency/level grid, drawn either as a
+  log-frequency-vs-time heatmap or as the classic 3D receding
+  waterfall of spectra. The L/R toggle picks the channel.
 - **Stereo Image** - the home for stereo-specific analysis, with a
   Divergence / Correlation / Goniometer view selector. **Divergence**
   (shipped) plots the per-frequency device-added stereo divergence on
@@ -162,7 +170,6 @@ Not yet built:
   - *Parameter-sweep curves* - shipped as the Parameter Sweep mode
     (THD% / IMD% metrics); FR-at-frequency and SNR/SINAD metrics
     still pending.
-  - *Cumulative Spectral Decay (CSD)* waterfall.
   - *Compression / dynamics transfer-function curve*.
 - Multisine flatness, step response, transfer function from noise.
 - **Sidecar-driven parameter pre-fill** - the SidecarReader

@@ -193,6 +193,16 @@ WTAnalyzerAudioProcessor::createParameterLayout()
         juce::StringArray { "Phase", "Group Delay" },
         0));
 
+    // IR-mode sub-view selector, shared by Direct Impulse IR and Farina
+    // IR: the time-domain waveform, or the captured IR's Cumulative
+    // Spectral Decay as a heatmap or a 3D waterfall. Index order matches
+    // the view selector in both IR displays.
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { "irView", 1 },
+        "IR View",
+        juce::StringArray { "Waveform", "CSD Heatmap", "CSD 3D" },
+        0));
+
     // Stereo display toggles - one set shared across every mode that
     // participates in the L / R / Diff convention (PLANNING.md 8.5.1).
     // L and R are independent on/off; at least one must stay on

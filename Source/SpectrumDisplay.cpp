@@ -11,6 +11,8 @@
 #include "Analyses/FrequencyResponse.h"
 #include "Analyses/AliasingDetection.h"
 
+#include <vector>
+
 SpectrumDisplay::SpectrumDisplay (WTAnalyzerAudioProcessor& proc)
     : processor (proc)
 {
@@ -357,6 +359,66 @@ void SpectrumDisplay::paint (juce::Graphics& g)
 
     const float dbRange = viewMaxDb - viewMinDb;
 
+    // Dynamic dB-axis tick step: a "nice" 1 / 2 / 5 value sized to the
+    // current (possibly zoomed) range, so gridlines and labels span the
+    // whole visible range. A fixed grid would leave the axis unlabelled
+    // wherever the view is zoomed or panned off the hardcoded values.
+    const float dbTickStep = [dbRange]
+    {
+        const float rough = juce::jmax (dbRange, 1.0e-3f) / 7.0f;
+        const float mag   = std::pow (10.0f, std::floor (std::log10 (rough)));
+        const float norm  = rough / mag;
+        const float s = (norm < 1.5f) ? 1.0f : (norm < 3.5f) ? 2.0f
+                      : (norm < 7.5f) ? 5.0f : 10.0f;
+        return s * mag;
+    }();
+    const int dbTickDecimals = dbTickStep < 0.1f ? 2 : (dbTickStep < 1.0f ? 1 : 0);
+
+    // Dynamic frequency-axis ticks: log-correct decade ticks normally,
+    // finer decade subdivisions when zoomed in, and a linear nice-step
+    // fallback for very narrow zooms (where log ~= linear). A fixed
+    // 20..20k set would leave the axis unlabelled inside a zoomed band.
+    std::vector<float> freqTicks;
+    {
+        const int dLo = (int) std::floor (logMin);
+        const int dHi = (int) std::ceil  (logMax);
+        auto addMantissas = [&] (std::initializer_list<float> ms)
+        {
+            freqTicks.clear();
+            for (int d = dLo; d <= dHi; ++d)
+                for (float m : ms)
+                {
+                    const float f = m * std::pow (10.0f, (float) d);
+                    if (f >= viewMinFreq && f <= viewMaxFreq) freqTicks.push_back (f);
+                }
+        };
+        addMantissas ({ 1.0f, 2.0f, 5.0f });
+        if (freqTicks.size() < 4)
+            addMantissas ({ 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f, 9.0f });
+        if (freqTicks.size() < 3)
+        {
+            freqTicks.clear();
+            const float rough = juce::jmax (viewMaxFreq - viewMinFreq, 1.0f) / 6.0f;
+            const float mag   = std::pow (10.0f, std::floor (std::log10 (rough)));
+            const float norm  = rough / mag;
+            const float step  = ((norm < 1.5f) ? 1.0f : (norm < 3.5f) ? 2.0f
+                                : (norm < 7.5f) ? 5.0f : 10.0f) * mag;
+            for (float f = std::ceil (viewMinFreq / step) * step;
+                 f <= viewMaxFreq + step * 0.001f; f += step)
+                freqTicks.push_back (f);
+        }
+    }
+
+    auto formatHz = [] (float hz) -> juce::String
+    {
+        if (hz < 1000.0f)
+            return juce::String (juce::roundToInt (hz));
+        const float k = hz / 1000.0f;
+        if (std::abs (k - std::round (k)) < 0.01f)
+            return juce::String (juce::roundToInt (k)) + "k";
+        return juce::String (k, 1) + "k";
+    };
+
     auto freqToX = [&] (float freq) -> float
     {
         const float t = (std::log10 (freq) - logMin) / logRange;
@@ -384,24 +446,19 @@ void SpectrumDisplay::paint (juce::Graphics& g)
     // Gridlines - skip any whose value is outside the current view.
     g.setColour (juce::Colour (0xff2a2d32));
 
-    const std::array<float, 6> kFreqGrid { 30.0f, 100.0f, 300.0f, 1000.0f, 3000.0f, 10000.0f };
-    for (float f : kFreqGrid)
+    for (float f : freqTicks)
     {
-        if (f < viewMinFreq || f > viewMaxFreq) continue;
         const float x = freqToX (f);
         g.drawLine (x, (float) plotArea.getY(), x, (float) plotArea.getBottom(), sf (1.0f));
     }
 
     if (! sweepHeatmapMode)
     {
-        // Normal dB gridlines, 12 dB stepping.
-        const std::array<float, 11> kDbGrid {
-            -72.0f, -60.0f, -48.0f, -36.0f, -24.0f, -12.0f,
-              0.0f,  12.0f,  24.0f,  36.0f,  48.0f
-        };
-        for (float db : kDbGrid)
+        // dB gridlines at the dynamic tick step, spanning the view range.
+        for (float db = std::ceil (viewMinDb / dbTickStep) * dbTickStep;
+             db <= viewMaxDb + dbTickStep * 0.001f;
+             db += dbTickStep)
         {
-            if (db < viewMinDb || db > viewMaxDb) continue;
             const float y = dbToY (db);
             g.drawLine ((float) plotArea.getX(), y, (float) plotArea.getRight(), y, sf (1.0f));
         }
@@ -421,44 +478,36 @@ void SpectrumDisplay::paint (juce::Graphics& g)
     g.setColour (juce::Colours::grey);
     g.setFont (juce::FontOptions (sf (10.0f)));
 
-    struct FreqLabel { float hz; const char* text; };
-    const std::array<FreqLabel, 10> kFreqLabels {{
-        { 20.0f,    "20"  }, { 50.0f,    "50"   }, { 100.0f,   "100" },
-        { 200.0f,   "200" }, { 500.0f,   "500"  }, { 1000.0f,  "1k"  },
-        { 2000.0f,  "2k"  }, { 5000.0f,  "5k"   }, { 10000.0f, "10k" },
-        { 20000.0f, "20k" }
-    }};
-    for (auto label : kFreqLabels)
+    for (float f : freqTicks)
     {
-        if (label.hz < viewMinFreq || label.hz > viewMaxFreq) continue;
-        const float x = freqToX (label.hz);
-        const int textWidth = sx (32);
+        const float x = freqToX (f);
+        const int textWidth = sx (40);
         juce::Rectangle<int> r ((int) x - textWidth / 2,
                                 labelGutterBottom.getY(),
                                 textWidth,
                                 labelGutterBottom.getHeight());
-        g.drawText (label.text, r, juce::Justification::centredTop, false);
+        g.drawText (formatHz (f), r, juce::Justification::centredTop, false);
     }
 
     if (! sweepHeatmapMode)
     {
-        struct DbLabel { float db; const char* text; };
-        const std::array<DbLabel, 11> kDbLabels {{
-            { 48.0f,  "+48" }, { 36.0f,  "+36" }, { 24.0f,  "+24" },
-            { 12.0f,  "+12" }, { 0.0f,    "0"  }, { -12.0f, "-12" },
-            { -24.0f, "-24" }, { -36.0f, "-36" }, { -48.0f, "-48" },
-            { -60.0f, "-60" }, { -72.0f, "-72" }
-        }};
-        for (auto label : kDbLabels)
+        // dB labels at the dynamic tick step, matching the gridlines.
+        for (float db = std::ceil (viewMinDb / dbTickStep) * dbTickStep;
+             db <= viewMaxDb + dbTickStep * 0.001f;
+             db += dbTickStep)
         {
-            if (label.db < viewMinDb || label.db > viewMaxDb) continue;
-            const float y = dbToY (label.db);
+            const float y = dbToY (db);
             const int textHeight = sx (12);
             juce::Rectangle<int> r (labelGutterLeft.getX(),
                                     (int) y - textHeight / 2,
                                     labelGutterLeft.getWidth() - sx (4),
                                     textHeight);
-            g.drawText (label.text, r, juce::Justification::centredRight, false);
+            juce::String txt;
+            if (std::abs (db) < dbTickStep * 0.5f)
+                txt = "0";
+            else
+                txt = (db > 0.0f ? "+" : "") + juce::String (db, dbTickDecimals);
+            g.drawText (txt, r, juce::Justification::centredRight, false);
         }
     }
     else

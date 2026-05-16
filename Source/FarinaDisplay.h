@@ -26,6 +26,7 @@
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
 #include "Analyses/FarinaIR.h"
+#include "CSDView.h"
 
 class FarinaDisplay  : public juce::Component,
                        private juce::Timer
@@ -47,9 +48,17 @@ private:
 
     void drawWaveform (juce::Graphics& g, juce::Rectangle<int> plotArea);
     juce::String statusText() const;
+    void syncViewButtons();
 
     WTAnalyzerAudioProcessor& processor;
     float uiScale = 1.0f;
+
+    // Waveform / CSD Heatmap / CSD 3D selector, backed by the shared
+    // `irView` APVTS parameter.
+    juce::TextButton waveformButton   { "Waveform" };
+    juce::TextButton csdHeatmapButton { "Heatmap"  };
+    juce::TextButton csd3DButton      { "3D"       };
+    CSDView          csdView;
 
     juce::Slider f0Slider;
     juce::Slider f1Slider;

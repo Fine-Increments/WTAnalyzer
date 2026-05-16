@@ -83,6 +83,7 @@ void FarinaIR::reset()
 {
     resetChannel (chL);
     resetChannel (chR);
+    irGeneration.fetch_add (1, std::memory_order_relaxed);
 }
 
 void FarinaIR::setSweepParams (float f0, float f1, float durationSec, float tail)
@@ -253,4 +254,5 @@ void FarinaIR::runDeconvolution (ChannelState& ch)
     }
 
     ch.irLength.store (tailSamples, std::memory_order_release);
+    irGeneration.fetch_add (1, std::memory_order_relaxed);
 }

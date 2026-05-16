@@ -22,6 +22,7 @@
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
 #include "Analyses/ImpulseResponse.h"
+#include "CSDView.h"
 
 class ImpulseDisplay  : public juce::Component,
                         private juce::Timer
@@ -42,9 +43,17 @@ private:
     float sf (float v) const noexcept { return v * uiScale; }
 
     void drawWaveform (juce::Graphics& g, juce::Rectangle<int> plotArea);
+    void syncViewButtons();
 
     WTAnalyzerAudioProcessor& processor;
     float uiScale = 1.0f;
+
+    // Waveform / CSD Heatmap / CSD 3D selector, backed by the shared
+    // `irView` APVTS parameter.
+    juce::TextButton waveformButton   { "Waveform" };
+    juce::TextButton csdHeatmapButton { "Heatmap"  };
+    juce::TextButton csd3DButton      { "3D"       };
+    CSDView          csdView;
 
     juce::TextButton clearButton  { "Clear" };
     juce::TextButton exportButton { "Export" };

@@ -15,9 +15,30 @@
 #include <limits>
 
 FarinaDisplay::FarinaDisplay (WTAnalyzerAudioProcessor& proc)
-    : processor (proc)
+    : processor (proc),
+      csdView   (proc)
 {
     setOpaque (true);
+
+    // Waveform / CSD Heatmap / CSD 3D view selector (radio group),
+    // backed by the shared `irView` parameter.
+    auto configureViewButton = [this] (juce::TextButton& b, int idx)
+    {
+        addAndMakeVisible (b);
+        b.setClickingTogglesState (true);
+        b.setRadioGroupId (8, juce::dontSendNotification);
+        b.onClick = [this, idx]
+        {
+            if (auto* p = processor.apvts.getParameter ("irView"))
+                p->setValueNotifyingHost (p->convertTo0to1 ((float) idx));
+        };
+    };
+    configureViewButton (waveformButton,   0);
+    configureViewButton (csdHeatmapButton, 1);
+    configureViewButton (csd3DButton,      2);
+
+    addChildComponent (csdView);
+    syncViewButtons();
 
     auto setupSlider = [this] (juce::Slider& s, juce::Label& label,
                                const juce::String& suffix)
@@ -63,11 +84,34 @@ void FarinaDisplay::setUiScale (float newScale) noexcept
     resized();
 }
 
+void FarinaDisplay::syncViewButtons()
+{
+    const int v = (int) *processor.apvts.getRawParameterValue ("irView");
+    waveformButton  .setToggleState (v == 0, juce::dontSendNotification);
+    csdHeatmapButton.setToggleState (v == 1, juce::dontSendNotification);
+    csd3DButton     .setToggleState (v == 2, juce::dontSendNotification);
+}
+
 void FarinaDisplay::timerCallback()
 {
     // Run any pending deconvolution. tryProcessCapture() is a no-op if
     // the audio thread hasn't finished a capture yet, so this is cheap.
     processor.farinaIR.tryProcessCapture();
+
+    syncViewButtons();
+
+    const bool csdActive = (int) *processor.apvts.getRawParameterValue ("irView") != 0;
+    csdView.setVisible (csdActive);
+
+    if (csdActive)
+    {
+        const auto& f = processor.farinaIR;
+        using Ch = FarinaIR::Channel;
+        csdView.updateSource (f.getIR (Ch::L).data(), f.getIRLength (Ch::L),
+                              f.getIR (Ch::R).data(), f.getIRLength (Ch::R),
+                              f.getSampleRate(), f.getIRGeneration());
+    }
+
     repaint();
 }
 
@@ -134,6 +178,21 @@ void FarinaDisplay::resized()
     layoutSliderRow (f1Slider,    f1Label);
     layoutSliderRow (sweepSlider, sweepLabel);
     layoutSliderRow (tailSlider,  tailLabel);
+
+    // View-selector band between the header and the plot.
+    auto viewBand = bounds.removeFromTop (sx (24));
+    {
+        const int vbW = sx (64), vbH = sx (20), vbGap = sx (4);
+        int       vx  = viewBand.getCentreX() - (vbW * 3 + vbGap * 2) / 2;
+        const int vy  = viewBand.getCentreY() - vbH / 2;
+        waveformButton  .setBounds (vx, vy, vbW, vbH); vx += vbW + vbGap;
+        csdHeatmapButton.setBounds (vx, vy, vbW, vbH); vx += vbW + vbGap;
+        csd3DButton     .setBounds (vx, vy, vbW, vbH);
+    }
+
+    // The CSD view covers the same rect as the waveform plot.
+    csdView.setUiScale (uiScale);
+    csdView.setBounds (bounds.reduced (sx (24), sx (8)));
 }
 
 void FarinaDisplay::paint (juce::Graphics& g)
@@ -176,7 +235,11 @@ void FarinaDisplay::paint (juce::Graphics& g)
                 topRow.withTrimmedRight (sx (84)),
                 juce::Justification::centredRight, false);
 
-    drawWaveform (g, bounds.reduced (sx (24), sx (12)));
+    // Plot area starts below the header + view band. In a CSD view the
+    // csdView child component covers the plot rect and paints itself.
+    bounds.removeFromTop (sx (24));   // view-selector band, owned by the buttons
+    if ((int) *processor.apvts.getRawParameterValue ("irView") == 0)
+        drawWaveform (g, bounds.reduced (sx (24), sx (8)));
 }
 
 void FarinaDisplay::drawWaveform (juce::Graphics& g, juce::Rectangle<int> area)

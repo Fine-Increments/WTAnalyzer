@@ -118,6 +118,13 @@ public:
     }
     float getSampleRate() const noexcept { return sampleRate; }
 
+    // Bumped whenever a deconvolution completes or the state is reset, so
+    // the CSD view can tell when the IR has changed and recompute.
+    int getIRGeneration() const noexcept
+    {
+        return irGeneration.load (std::memory_order_relaxed);
+    }
+
     // For the display - read back the currently-set sweep parameters.
     float getF0Hz()        const noexcept { return f0Hz; }
     float getF1Hz()        const noexcept { return f1Hz; }
@@ -164,4 +171,6 @@ private:
     float f1Hz             = kDefaultF1Hz;
     float sweepDurationSec = kDefaultSweepSec;
     float tailSec          = kDefaultTailSec;
+
+    std::atomic<int> irGeneration { 0 };
 };
