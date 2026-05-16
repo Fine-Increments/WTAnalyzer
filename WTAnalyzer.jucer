@@ -45,6 +45,10 @@
             file="Source/StereoDisplay.cpp"/>
       <FILE id="Strd02" name="StereoDisplay.h" compile="0" resource="0"
             file="Source/StereoDisplay.h"/>
+      <FILE id="SwCv01" name="SweepCurveDisplay.cpp" compile="1" resource="0"
+            file="Source/SweepCurveDisplay.cpp"/>
+      <FILE id="SwCv02" name="SweepCurveDisplay.h" compile="0" resource="0"
+            file="Source/SweepCurveDisplay.h"/>
       <FILE id="Side01" name="SidecarReader.cpp" compile="1" resource="0"
             file="Source/SidecarReader.cpp"/>
       <FILE id="Side02" name="SidecarReader.h" compile="0" resource="0"
@@ -90,6 +94,10 @@
               file="Source/Analyses/StereoAnalysis.cpp"/>
         <FILE id="StrA02" name="StereoAnalysis.h" compile="0" resource="0"
               file="Source/Analyses/StereoAnalysis.h"/>
+        <FILE id="SwCv03" name="SweepCurve.cpp" compile="1" resource="0"
+              file="Source/Analyses/SweepCurve.cpp"/>
+        <FILE id="SwCv04" name="SweepCurve.h" compile="0" resource="0"
+              file="Source/Analyses/SweepCurve.h"/>
       </GROUP>
     </GROUP>
   </MAINGROUP>

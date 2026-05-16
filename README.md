@@ -68,6 +68,15 @@ Pre-alpha. Working analysis modes:
   input and output clouds, so the device's effect is the visible
   delta) or Difference (post minus aligned pre - the stereo image
   the device added).
+- **Parameter Sweep** - a Plugin Doctor style 1D X-Y curve: a
+  headline metric (THD% or IMD%, picked in the panel header) plotted
+  against a swept parameter. The user automates WTAnalyzer's Sweep
+  Position parameter from the DAW and routes the same automation to
+  whatever they want to characterise (the source plugin's WT Pos, an
+  effect's drive or cutoff); while Capture is armed the metric is
+  recorded per L/R channel bucketed by sweep position. The captured
+  curves draw alongside a live dot at the current position; the Y
+  axis auto-ranges in percent.
 
 Both IR modes are shipped but currently bottlenecked by WTSynth as a
 source: the wavetable cycling model produces an impulse train at
@@ -139,8 +148,9 @@ Not yet built:
   time, freq) with a mode-specific colormap (bipolar for
   FR/IR, monotonic for THD/IMD/Aliasing).
 - **Precision chart types**:
-  - *Parameter-sweep curves* (Plugin Doctor style 1D X-Y plots:
-    THD% / IMD% / FR-at-freq vs swept parameter).
+  - *Parameter-sweep curves* - shipped as the Parameter Sweep mode
+    (THD% / IMD% metrics); FR-at-frequency and SNR/SINAD metrics
+    still pending.
   - *Phase response + group delay* (companion charts to FR
     magnitude).
   - *Cumulative Spectral Decay (CSD)* waterfall.

@@ -1,25 +1,27 @@
 {
   "schema_version": 1,
-  "script": "noise.py",
-  "analysis": "TransferFunctionFromNoise",
-  "generated_at": "2026-05-15T06:05:54.070053Z",
+  "script": "two_tone.py",
+  "analysis": "IMD",
+  "generated_at": "2026-05-16T04:09:25.944948Z",
   "audio": {
     "sample_rate": 48000,
     "samples_per_frame": 2048,
-    "frame_count": 16,
+    "frame_count": 64,
     "format": "float32",
     "channels": 1
   },
   "parameters": {
-    "Color": "Pink",
-    "SeedOffset": 0,
-    "#Frames": 16
+    "Mode": "Fixed Pair",
+    "Lower": 3,
+    "Upper": 19,
+    "#Frames": 64
   },
   "command_line": [
-    "/Users/swgeniusvets/Documents/WTAnalyzer/scripts/noise.py",
-    "Pink",
-    "0",
-    "16",
+    "/Users/swgeniusvets/Documents/WTAnalyzer/scripts/two_tone.py",
+    "Fixed Pair",
+    "3",
+    "19",
+    "64",
     "/Users/swgeniusvets/Documents/WTAnalyzer/scripts"
   ]
 }

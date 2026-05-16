@@ -43,7 +43,7 @@ WTAnalyzerAudioProcessor::createParameterLayout()
         "Active Analysis",
         juce::StringArray { "Generic Overlay", "Frequency Response", "THD Measurement",
                             "Aliasing Detection", "IMD Measurement", "Direct Impulse IR",
-                            "Farina IR", "Stereo Image" },
+                            "Farina IR", "Stereo Image", "Parameter Sweep" },
         0));
 
     // Level meter mode: false = Peak (default, matches DAW meter behaviour),
@@ -172,6 +172,16 @@ WTAnalyzerAudioProcessor::createParameterLayout()
         juce::ParameterID { "sweepCaptureActive", 1 },
         "Sweep Capture Active",
         false));
+
+    // Parameter Sweep mode: which headline metric is recorded as the
+    // 1D X-Y curve. Index order matches SweepCurveDisplay's metric
+    // selector. THD% and IMD% are differential percentages whose
+    // per-channel scalars the THD / IMD analyses already produce.
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { "sweepMetric", 1 },
+        "Sweep Metric",
+        juce::StringArray { "THD%", "IMD%" },
+        0));
 
     // Stereo display toggles - one set shared across every mode that
     // participates in the L / R / Diff convention (PLANNING.md 8.5.1).
@@ -308,8 +318,14 @@ void WTAnalyzerAudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
                              *apvts.getRawParameterValue ("farinaTailSec"));
 
     sweepCapture.prepare (kSpectrumBins);
+    sweepCurve  .reset();
 
     lastActiveAnalysisIndex = (int) *apvts.getRawParameterValue ("activeAnalysis");
+    lastSweepMetric          = (int) *apvts.getRawParameterValue ("sweepMetric");
+    sweepCaptureWasArmed     = false;
+    sweepTransportWasPlaying = false;
+    sweepLastPosition        = 0.0f;
+    sweepCaptureWarmup       = 0;
 }
 
 void WTAnalyzerAudioProcessor::runLatencyMeasurement()
@@ -452,6 +468,84 @@ void WTAnalyzerAudioProcessor::runSpectrumFft()
         stereoAnalysis.update (preSpectrumDb  .data(), preSpectrumDb_R.data(),
                                postSpectrumDb .data(), postSpectrumDb_R.data(),
                                postComplexL.data(), postComplexR.data());
+    else if (activeIndex == (int) AnalysisMode::ParameterSweep)
+    {
+        // Parameter Sweep runs the selected headline-metric analysis and,
+        // while capture is armed, records its per-channel scalar bucketed
+        // by sweepPosition. Switching metric clears the curve (THD% and
+        // IMD% are different units).
+        const int metric = (int) *apvts.getRawParameterValue ("sweepMetric");
+        if (metric != lastSweepMetric)
+        {
+            sweepCurve.reset();
+            lastSweepMetric = metric;
+        }
+
+        float vL = SweepCurve::kNoData;
+        float vR = SweepCurve::kNoData;
+
+        if (metric == 0)   // THD%
+        {
+            thdMeasurement.update (preSpectrumDb  .data(), postSpectrumDb  .data(),
+                                   preSpectrumDb_R.data(), postSpectrumDb_R.data());
+            if (thdMeasurement.isValid (THDMeasurement::Channel::L))
+                vL = thdMeasurement.getTotalThdPercent (THDMeasurement::Channel::L);
+            if (thdMeasurement.isValid (THDMeasurement::Channel::R))
+                vR = thdMeasurement.getTotalThdPercent (THDMeasurement::Channel::R);
+        }
+        else               // IMD%
+        {
+            imdMeasurement.update (preSpectrumDb  .data(), postSpectrumDb  .data(),
+                                   preSpectrumDb_R.data(), postSpectrumDb_R.data());
+            if (imdMeasurement.isValid (IMDMeasurement::Channel::L))
+                vL = imdMeasurement.getTotalImdPercent (IMDMeasurement::Channel::L);
+            if (imdMeasurement.isValid (IMDMeasurement::Channel::R))
+                vR = imdMeasurement.getTotalImdPercent (IMDMeasurement::Channel::R);
+        }
+
+        const bool  armed    = *apvts.getRawParameterValue ("sweepCaptureActive") > 0.5f;
+        const float position = *apvts.getRawParameterValue ("sweepPosition");
+
+        // A fresh sweep pass begins on any of: arming capture, the
+        // transport starting, or the sweep position snapping backward
+        // (a loop wrap or replay). Skip a brief warm-up past each
+        // boundary so the settling transient (an FFT window straddling
+        // silence, or the previous extreme) does not land in a bucket
+        // and hijack the display's Y auto-range. The snap-back test
+        // catches looped playback, where the transport reports no play
+        // rising edge.
+        //
+        // Kept to the physical minimum - two full FFT-window refreshes -
+        // so it eats as little of the start-of-sweep region as possible.
+        // The window straddle means the extremes still cannot be read
+        // cleanly from a ramped sweep regardless; the user holds the
+        // automation briefly at each extreme to measure them (mode help).
+        constexpr int   kSweepWarmupFrames =
+            2 * (kSpectrumFftSize / kSpectrumHopSize);
+        constexpr float kPassSnapBack = 0.15f;
+        const bool armRising   = armed && ! sweepCaptureWasArmed;
+        const bool playRising  = transportPlaying && ! sweepTransportWasPlaying;
+        const bool snappedBack = (sweepLastPosition - position) > kPassSnapBack;
+        if (armRising || playRising || snappedBack)
+            sweepCaptureWarmup = kSweepWarmupFrames;
+
+        sweepCaptureWasArmed     = armed;
+        sweepTransportWasPlaying = transportPlaying;
+        sweepLastPosition        = position;
+
+        // Capture only while armed AND the transport is playing, so an
+        // armed-but-stopped plugin does not dump idle readings into a
+        // bucket.
+        if (sweepCaptureWarmup > 0)
+        {
+            --sweepCaptureWarmup;
+        }
+        else if (armed && transportPlaying
+                 && (vL != SweepCurve::kNoData || vR != SweepCurve::kNoData))
+        {
+            sweepCurve.captureFrame (position, vL, vR);
+        }
+    }
 
     spectrumFrameCount.fetch_add (1, std::memory_order_release);
 }
@@ -661,6 +755,14 @@ void WTAnalyzerAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     const bool irActive       = activeIndexLocal == (int) AnalysisMode::DirectImpulseIR;
     const bool farinaActive   = activeIndexLocal == (int) AnalysisMode::FarinaIR;
     const bool stereoActive   = activeIndexLocal == (int) AnalysisMode::StereoImage;
+
+    // Transport state for the Parameter Sweep capture gate. Assume the
+    // transport is playing if the host does not report a playhead, so
+    // capture still works on hosts that withhold transport info.
+    transportPlaying = true;
+    if (auto* ph = getPlayHead())
+        if (auto posInfo = ph->getPosition())
+            transportPlaying = posInfo->getIsPlaying();
 
     // Poll window / average params each block so UI changes take effect
     // promptly. Cheap; only invalidates state if values actually changed.

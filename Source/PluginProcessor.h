@@ -17,6 +17,7 @@
 #include "Analyses/ImpulseResponse.h"
 #include "Analyses/FarinaIR.h"
 #include "Analyses/SweepCapture.h"
+#include "Analyses/SweepCurve.h"
 #include "Analyses/StereoAnalysis.h"
 
 //==============================================================================
@@ -177,7 +178,8 @@ public:
         IMDMeasurement    = 4,
         DirectImpulseIR   = 5,
         FarinaIR          = 6,
-        StereoImage       = 7
+        StereoImage       = 7,
+        ParameterSweep    = 8
     };
 
     // First analysis: derived from the existing pre/post spectrum FFT.
@@ -223,6 +225,12 @@ public:
     // output bucketed by the current `sweepPosition` APVTS value
     // (DAW-automated, typically alongside WTSynth's WT Pos).
     SweepCapture sweepCapture;
+
+    // 1D parameter-sweep curve. Drives the Parameter Sweep mode: while
+    // sweep capture is armed, the selected headline metric (THD%, IMD%)
+    // is recorded per L/R channel bucketed by `sweepPosition`, producing
+    // a Plugin Doctor style X-Y curve.
+    SweepCurve sweepCurve;
 
     // Sidecar JSON reader: parameter-source for analyses that need to
     // know exactly what test signal the script generated (PLANNING.md
@@ -295,6 +303,25 @@ private:
     // Tracks the activeAnalysis parameter value seen on the last FFT so we
     // can reset the active analysis state on mode change. Audio-thread only.
     int lastActiveAnalysisIndex = 0;
+
+    // Tracks the sweepMetric parameter so the parameter-sweep curve is
+    // cleared when the user switches metric (THD% and IMD% are different
+    // units - a mixed curve would be meaningless). Audio-thread only.
+    int lastSweepMetric = 0;
+
+    // Parameter Sweep capture state (audio-thread only). A short warm-up
+    // skips the transient at the start of every sweep pass so it cannot
+    // land in a bucket and hijack the display's Y auto-range. A pass
+    // boundary is any of: arming capture, the transport starting, or the
+    // sweep position snapping backward (loop wrap / replay).
+    bool  sweepCaptureWasArmed     = false;
+    bool  sweepTransportWasPlaying = false;
+    float sweepLastPosition        = 0.0f;
+    int   sweepCaptureWarmup       = 0;
+
+    // Host transport play state for the current block. Defaults true so
+    // hosts that do not report a playhead still capture normally.
+    bool  transportPlaying = true;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (WTAnalyzerAudioProcessor)
 };

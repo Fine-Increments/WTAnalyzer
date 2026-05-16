@@ -20,6 +20,7 @@
 #include "ImpulseDisplay.h"
 #include "FarinaDisplay.h"
 #include "StereoDisplay.h"
+#include "SweepCurveDisplay.h"
 #include "LevelMetersPanel.h"
 #include "LatencyPanel.h"
 
@@ -195,6 +196,9 @@ private:
 
     // Stereo Image display path - per-frequency stereo divergence.
     StereoDisplay    stereoDisplay;
+
+    // Parameter Sweep display path - Plugin Doctor style 1D X-Y curve.
+    SweepCurveDisplay sweepCurveDisplay;
 
     // Shown over whichever panel is active when the sidechain input is
     // not connected. Visibility is driven from the timer.

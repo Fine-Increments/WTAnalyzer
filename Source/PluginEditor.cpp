@@ -57,6 +57,7 @@ WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioP
       impulseDisplay       (p),
       farinaDisplay        (p),
       stereoDisplay        (p),
+      sweepCurveDisplay    (p),
       levelMetersPanel     (p),
       latencyPanel         (p)
 {
@@ -70,6 +71,7 @@ WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioP
     addChildComponent (impulseDisplay);
     addChildComponent (farinaDisplay);
     addChildComponent (stereoDisplay);
+    addChildComponent (sweepCurveDisplay);
     addAndMakeVisible (levelMetersPanel);
     addAndMakeVisible (latencyPanel);
 
@@ -117,7 +119,11 @@ WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioP
     addChildComponent (sweepClearButton);
     sweepClearButton.onClick = [this]
     {
+        // The Capture / Clear pair is shared by the FR 2D heatmap and the
+        // Parameter Sweep curve; only one is meaningful per mode, so Clear
+        // wipes both - harmless for the inactive one.
         audioProcessor.sweepCapture.reset();
+        audioProcessor.sweepCurve.reset();
         repaint();
     };
 
@@ -314,6 +320,7 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeName (int modeIndex)
         case Mode::DirectImpulseIR:   return "Direct Impulse IR";
         case Mode::FarinaIR:          return "Farina IR";
         case Mode::StereoImage:       return "Stereo Image";
+        case Mode::ParameterSweep:    return "Parameter Sweep";
     }
     return "Analysis";
 }
@@ -861,6 +868,54 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
                 "  inherently a stereo comparison, so the shared L / R / Diff\n"
                 "  toggle row is hidden here. The panel's own selector picks the\n"
                 "  visualisation instead.\n";
+
+        case Mode::ParameterSweep:
+            return
+                "Parameter Sweep\n"
+                "===============\n\n"
+                "What it measures\n"
+                "  A 1D X-Y curve of a headline metric versus a swept parameter\n"
+                "  - the Plugin Doctor style precision plot. X is the sweep\n"
+                "  position; Y is the selected metric. A header selector picks\n"
+                "  the metric: THD% or IMD%.\n\n"
+                "Input\n"
+                "  THD% expects a clean sine; IMD% expects a two-tone signal -\n"
+                "  the same inputs those modes need. The device parameter you\n"
+                "  want on the X axis is swept by the source/host.\n\n"
+                "How to drive it\n"
+                "  Automate WTAnalyzer's Sweep Position parameter (0..1) from\n"
+                "  the DAW, and route the SAME automation to the parameter you\n"
+                "  want to characterise - the source plugin's WT Pos, an\n"
+                "  effect's drive or cutoff, etc. Arm Capture; the curve fills\n"
+                "  in as the automation plays. Capture records only while the\n"
+                "  transport is playing; Clear starts a fresh capture.\n"
+                "  Because X is just the 0..1 lane, 'THD% vs frequency' and\n"
+                "  'THD% vs drive' are the same capture - the difference is\n"
+                "  only what you routed the automation to.\n\n"
+                "Shaping the sweep\n"
+                "  Use a slow ramp - 40 to 60 seconds end to end. A fast\n"
+                "  sweep lands only about one measurement frame per bucket\n"
+                "  and the curve looks jagged; a slow ramp gives each bucket\n"
+                "  many frames to average into a clean curve.\n"
+                "  Hold the automation still for about a second at each end,\n"
+                "  before and after the ramp. Each measurement is a ~170 ms\n"
+                "  window average, so the minimum and maximum values read\n"
+                "  correctly only while the parameter sits still - the holds\n"
+                "  give the capture a settled signal at each extreme.\n\n"
+                "How to read it\n"
+                "  Green (L) and lime (R) traces are the captured curve per\n"
+                "  channel. A faint vertical line marks the current sweep\n"
+                "  position, with live dots showing the present reading. The\n"
+                "  Y axis auto-ranges to the captured data, in percent.\n\n"
+                "  Switching the metric clears the curve - THD% and IMD% are\n"
+                "  different units and would not share a Y axis.\n\n"
+                "2D Sweep Capture\n"
+                "  Not applicable - this mode IS the parameter-sweep capture,\n"
+                "  in its 1D X-Y form. The 2D heatmap is the sibling capability\n"
+                "  in the spectrum modes.\n\n"
+                "Stereo (L / R / Diff)\n"
+                "  Both channels are always drawn so channel asymmetry stays\n"
+                "  visible; the shared L / R / Diff toggle row is hidden here.\n";
     }
     return "No help available for this mode.";
 }
@@ -1143,26 +1198,31 @@ void WTAnalyzerAudioProcessorEditor::applyAnalysisMode (int modeIndex)
     const bool wantsIrPath       = (modeIndex == (int) Mode::DirectImpulseIR);
     const bool wantsFarinaPath   = (modeIndex == (int) Mode::FarinaIR);
     const bool wantsStereoPath   = (modeIndex == (int) Mode::StereoImage);
+    const bool wantsSweepPath    = (modeIndex == (int) Mode::ParameterSweep);
 
-    spectrumDisplay.setVisible (wantsSpectrumPath);
-    cursorReadout  .setVisible (wantsSpectrumPath);
-    thdDisplay     .setVisible (wantsThdPath);
-    imdDisplay     .setVisible (wantsImdPath);
-    impulseDisplay .setVisible (wantsIrPath);
-    farinaDisplay  .setVisible (wantsFarinaPath);
-    stereoDisplay  .setVisible (wantsStereoPath);
+    spectrumDisplay  .setVisible (wantsSpectrumPath);
+    cursorReadout    .setVisible (wantsSpectrumPath);
+    thdDisplay       .setVisible (wantsThdPath);
+    imdDisplay       .setVisible (wantsImdPath);
+    impulseDisplay   .setVisible (wantsIrPath);
+    farinaDisplay    .setVisible (wantsFarinaPath);
+    stereoDisplay    .setVisible (wantsStereoPath);
+    sweepCurveDisplay.setVisible (wantsSweepPath);
 
     // The alias-view toggle row lives inside SpectrumDisplay (it's tied to
     // a specific mode within the shared spectrum panel) but its visibility
     // is mode-driven from the editor.
     spectrumDisplay.setAliasingViewButtonsVisible (modeIndex == (int) Mode::AliasingDetection);
 
-    // Capture / Clear in the header swap between FR sweep recorder and
-    // Farina IR one-shot trigger based on the active mode.
-    const bool isFRMode     = (modeIndex == (int) Mode::FrequencyResponse);
+    // Capture / Clear in the header swap between the sweep recorder and
+    // the Farina IR one-shot trigger based on the active mode. The sweep
+    // recorder pair serves both the FR 2D heatmap and the Parameter
+    // Sweep curve - same `sweepCaptureActive` arm gesture for both.
     const bool isFarinaMode = (modeIndex == (int) Mode::FarinaIR);
-    sweepCaptureButton .setVisible (isFRMode);
-    sweepClearButton   .setVisible (isFRMode);
+    const bool wantsSweepButtons = (modeIndex == (int) Mode::FrequencyResponse)
+                                 || wantsSweepPath;
+    sweepCaptureButton .setVisible (wantsSweepButtons);
+    sweepClearButton   .setVisible (wantsSweepButtons);
     farinaCaptureButton.setVisible (isFarinaMode);
     farinaClearButton  .setVisible (isFarinaMode);
 
@@ -1220,6 +1280,7 @@ void WTAnalyzerAudioProcessorEditor::resized()
     impulseDisplay  .setUiScale (s);
     farinaDisplay   .setUiScale (s);
     stereoDisplay   .setUiScale (s);
+    sweepCurveDisplay.setUiScale (s);
     sidechainNotice .setUiScale (s);
     levelMetersPanel.setUiScale (s);
     latencyPanel    .setUiScale (s);
@@ -1286,12 +1347,13 @@ void WTAnalyzerAudioProcessorEditor::resized()
     bounds.removeFromBottom (sx (4));
 
     // All mode panels share the same rect; visibility decides which is drawn.
-    spectrumDisplay.setBounds (bounds);
-    thdDisplay     .setBounds (bounds);
-    imdDisplay     .setBounds (bounds);
-    impulseDisplay .setBounds (bounds);
-    farinaDisplay  .setBounds (bounds);
-    stereoDisplay  .setBounds (bounds);
+    spectrumDisplay  .setBounds (bounds);
+    thdDisplay       .setBounds (bounds);
+    imdDisplay       .setBounds (bounds);
+    impulseDisplay   .setBounds (bounds);
+    farinaDisplay    .setBounds (bounds);
+    stereoDisplay    .setBounds (bounds);
+    sweepCurveDisplay.setBounds (bounds);
 
     // The sidechain notice covers the whole display rect.
     sidechainNotice.setBounds (bounds);
