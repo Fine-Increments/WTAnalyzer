@@ -135,6 +135,27 @@ public:
     std::array<float, kSpectrumBins> postSpectrumDb   {};
     std::array<float, kSpectrumBins> postSpectrumDb_R {};
 
+    // Complex (interleaved re/im pairs) post-channel spectra, retained so
+    // the Stereo Image mode's Correlation sub-view can form the L/R
+    // cross-spectrum. Pre channels need magnitude only and stay real.
+    std::array<float, 2 * kSpectrumBins> postComplexL {};
+    std::array<float, 2 * kSpectrumBins> postComplexR {};
+
+    // Goniometer (Stereo Image mode) time-domain capture: rings of the
+    // most recent L/R sample pairs for the post-effect signal AND the
+    // delay-compensated pre-effect signal. Both are kept so the view can
+    // overlay pre vs post or scope the per-channel difference. Filled
+    // per-sample only while the Stereo Image mode is active; the display
+    // reads the whole ring each frame and plots the L-vs-R Lissajous.
+    // Size is a power of two so the write wrap is a cheap mask. 2048
+    // samples is ~43 ms at 48 kHz - a good goniometer persistence window.
+    static constexpr int kGonioBufferSize = 2048;
+    std::array<float, kGonioBufferSize> gonioPostL {};
+    std::array<float, kGonioBufferSize> gonioPostR {};
+    std::array<float, kGonioBufferSize> gonioPreL  {};
+    std::array<float, kGonioBufferSize> gonioPreR  {};
+    std::atomic<int> gonioWritePos { 0 };
+
     // Increments each time a new spectrum frame is written. Available for the
     // editor if it ever wants to repaint only on fresh data.
     std::atomic<int> spectrumFrameCount { 0 };

@@ -13,8 +13,15 @@
         acted on the right channel, downward (mint) where it acted on the
         left. X is log frequency, Y is signed dB ("dB R" above, "dB L"
         below).
-      - Correlation (planned): per-frequency phase correlation.
-      - Goniometer (planned): time-domain L-vs-R XY scope.
+      - Correlation (shipped): per-frequency phase correlation of the
+        post signal's L and R channels. X is log frequency, Y is the
+        coherence value from +1 (in phase) through 0 (decorrelated) to
+        -1 (anti-phase / mono-fold cancellation).
+      - Goniometer (shipped): time-domain L-vs-R XY scope (Lissajous).
+        M axis vertical, S axis horizontal, L and R on the 45-degree
+        diagonals. A header toggle picks Pre / Post (overlaid input
+        and output clouds) or Difference (post minus aligned pre - the
+        stereo image the device added).
 
     The shared editor-level SidechainNotice covers this panel when the
     sidechain isn't connected, so the display itself assumes pre is wired.
@@ -50,11 +57,17 @@ private:
 
     enum class SubView { Divergence, Correlation, Goniometer };
     SubView currentSubView() const noexcept;
+
+    // Goniometer rendering mode: overlay the pre / post stereo clouds,
+    // or scope the per-channel difference (post - aligned pre).
+    enum class GonioMode { PrePost, Difference };
+    GonioMode currentGonioMode() const noexcept;
+
     void    syncViewButtons();
 
     void drawDivergence (juce::Graphics& g, juce::Rectangle<int> plotArea);
-    void drawPlaceholder (juce::Graphics& g, juce::Rectangle<int> plotArea,
-                          const juce::String& title);
+    void drawCorrelation (juce::Graphics& g, juce::Rectangle<int> plotArea);
+    void drawGoniometer (juce::Graphics& g, juce::Rectangle<int> plotArea);
 
     WTAnalyzerAudioProcessor& processor;
     float uiScale = 1.0f;
@@ -64,6 +77,11 @@ private:
     juce::TextButton divergenceButton  { "Divergence"  };
     juce::TextButton correlationButton { "Correlation" };
     juce::TextButton goniometerButton  { "Goniometer"  };
+
+    // Goniometer-only mode toggle, shown at the right of the header band
+    // when the Goniometer sub-view is active.
+    juce::TextButton gonioPrePostButton { "Pre / Post" };
+    juce::TextButton gonioDiffButton    { "Difference" };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (StereoDisplay)
 };

@@ -57,8 +57,17 @@ Pre-alpha. Working analysis modes:
   device acted on the right channel and down (mint) where it acted on
   the left. The plotted value is `|FR_R - FR_L|` signed toward the
   channel modified more, so a stereo-transparent device reads flat
-  regardless of how stereo the input was. Correlation (spectral phase
-  correlation) and Goniometer are planned sibling views.
+  regardless of how stereo the input was. **Correlation** (shipped)
+  plots the post signal's per-frequency L/R phase correlation from
+  their cross-spectrum, +1 (in phase) through 0 (decorrelated) to -1
+  (anti-phase / mono-fold cancellation), plus a Broadband corner
+  readout aggregating the whole band into one energy-weighted figure.
+  **Goniometer** (shipped) is a time-domain L-vs-R XY scope
+  (Lissajous): M axis vertical, S axis horizontal, L and R on the
+  45-degree diagonals. A header toggle picks Pre / Post (overlaid
+  input and output clouds, so the device's effect is the visible
+  delta) or Difference (post minus aligned pre - the stereo image
+  the device added).
 
 Both IR modes are shipped but currently bottlenecked by WTSynth as a
 source: the wavetable cycling model produces an impulse train at
@@ -136,8 +145,6 @@ Not yet built:
     magnitude).
   - *Cumulative Spectral Decay (CSD)* waterfall.
   - *Compression / dynamics transfer-function curve*.
-  - *Lissajous / goniometer + phase correlation meter* (depends
-    on stereo support).
 - Multisine flatness, step response, transfer function from noise.
 - **Sidecar-driven parameter pre-fill** - the SidecarReader
   infrastructure exists but no analysis consumes its parameters

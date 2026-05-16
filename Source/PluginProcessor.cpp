@@ -93,12 +93,21 @@ WTAnalyzerAudioProcessor::createParameterLayout()
         false));
 
     // Stereo Image sub-view selector. Divergence (default) is the
-    // per-frequency device-added stereo divergence. Correlation and
-    // Goniometer are planned sibling visualisations sharing this panel.
+    // per-frequency device-added stereo divergence; Correlation is the
+    // post L/R phase coherence; Goniometer is the time-domain L/R scope.
     layout.add (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { "stereoView", 1 },
         "Stereo Image View",
         juce::StringArray { "Divergence", "Correlation", "Goniometer" },
+        0));
+
+    // Goniometer rendering mode. "Pre / Post" overlays the input and
+    // output stereo clouds in their respective colours; "Difference"
+    // scopes the device-added signal (post - aligned pre) per channel.
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { "gonioMode", 1 },
+        "Goniometer Mode",
+        juce::StringArray { "Pre / Post", "Difference" },
         0));
 
     // Impulse-response window length in milliseconds. Maximum is 120000
@@ -356,10 +365,44 @@ void WTAnalyzerAudioProcessor::runSpectrumFft()
                                                             -120.0f);
     };
 
-    fftOne (spectrumPreBuffer,    preSpectrumDb);     // L
-    fftOne (spectrumPostBuffer,   postSpectrumDb);    // L
-    fftOne (spectrumPreBuffer_R,  preSpectrumDb_R);   // R
-    fftOne (spectrumPostBuffer_R, postSpectrumDb_R);  // R
+    // Post channels additionally retain their complex spectra: the Stereo
+    // Image mode's Correlation sub-view needs the L/R re/im pairs to form
+    // a cross-spectrum. performRealOnlyForwardTransform writes interleaved
+    // [re, im] pairs; bin k lives at scratch[2k], scratch[2k+1]. Magnitude
+    // is hypot(re, im), matching performFrequencyOnlyForwardTransform.
+    auto fftComplexOne = [this] (const std::array<float, kSpectrumFftSize>& source,
+                                 std::array<float, kSpectrumBins>& outputDb,
+                                 std::array<float, 2 * kSpectrumBins>& outputComplex)
+    {
+        std::fill (spectrumScratch.begin(), spectrumScratch.end(), 0.0f);
+
+        for (int i = 0; i < kSpectrumFftSize; ++i)
+        {
+            const int idx = (spectrumWritePos + i) % kSpectrumFftSize;
+            spectrumScratch[i] = source[idx];
+        }
+
+        spectrumWindow.multiplyWithWindowingTable (spectrumScratch.data(),
+                                                   (size_t) kSpectrumFftSize);
+
+        spectrumFft.performRealOnlyForwardTransform (spectrumScratch.data(), true);
+
+        constexpr float normFactor = 4.0f / (float) kSpectrumFftSize;
+        for (int bin = 0; bin < kSpectrumBins; ++bin)
+        {
+            const float re = spectrumScratch[2 * bin];
+            const float im = spectrumScratch[2 * bin + 1];
+            outputComplex[(size_t) (2 * bin)]     = re;
+            outputComplex[(size_t) (2 * bin + 1)] = im;
+            outputDb[bin] = juce::Decibels::gainToDecibels (std::hypot (re, im) * normFactor,
+                                                            -120.0f);
+        }
+    };
+
+    fftOne        (spectrumPreBuffer,    preSpectrumDb);                  // L
+    fftOne        (spectrumPreBuffer_R,  preSpectrumDb_R);                // R
+    fftComplexOne (spectrumPostBuffer,   postSpectrumDb,   postComplexL); // L
+    fftComplexOne (spectrumPostBuffer_R, postSpectrumDb_R, postComplexR); // R
 
     // Drive the active analysis from the same spectrum data. Selective
     // execution per PRINCIPLES.md section 9: only the active analysis runs.
@@ -407,7 +450,8 @@ void WTAnalyzerAudioProcessor::runSpectrumFft()
                                preSpectrumDb_R.data(), postSpectrumDb_R.data());
     else if (activeIndex == (int) AnalysisMode::StereoImage)
         stereoAnalysis.update (preSpectrumDb  .data(), preSpectrumDb_R.data(),
-                               postSpectrumDb .data(), postSpectrumDb_R.data());
+                               postSpectrumDb .data(), postSpectrumDb_R.data(),
+                               postComplexL.data(), postComplexR.data());
 
     spectrumFrameCount.fetch_add (1, std::memory_order_release);
 }
@@ -616,6 +660,7 @@ void WTAnalyzerAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     const int activeIndexLocal = (int) *apvts.getRawParameterValue ("activeAnalysis");
     const bool irActive       = activeIndexLocal == (int) AnalysisMode::DirectImpulseIR;
     const bool farinaActive   = activeIndexLocal == (int) AnalysisMode::FarinaIR;
+    const bool stereoActive   = activeIndexLocal == (int) AnalysisMode::StereoImage;
 
     // Poll window / average params each block so UI changes take effect
     // promptly. Cheap; only invalidates state if values actually changed.
@@ -654,6 +699,17 @@ void WTAnalyzerAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
             {
                 runSpectrumFft();
                 samplesSinceLastSpectrumFft = 0;
+            }
+
+            if (stereoActive)
+            {
+                const int gp = gonioWritePos.load (std::memory_order_relaxed);
+                gonioPostL[(size_t) gp] = postCh0[n];
+                gonioPostR[(size_t) gp] = postCh1[n];
+                gonioPreL [(size_t) gp] = preCh0 ? preCh0[n] : 0.0f;
+                gonioPreR [(size_t) gp] = preCh1 ? preCh1[n] : 0.0f;
+                gonioWritePos.store ((gp + 1) & (kGonioBufferSize - 1),
+                                     std::memory_order_relaxed);
             }
 
             if (irActive)

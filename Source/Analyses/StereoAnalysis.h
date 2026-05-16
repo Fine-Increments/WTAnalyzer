@@ -2,6 +2,21 @@
   ==============================================================================
 
     StereoAnalysis.h
+    Per-frequency stereo analysis for the Stereo Image mode. Drives two
+    sub-views from the spectrum FFT output:
+
+      Divergence  - device-added |FR_R - FR_L|, see below.
+      Correlation - per-frequency phase correlation of the POST signal's
+                    L and R channels, from their cross-spectrum. +1 = the
+                    two channels are in phase at that frequency, 0 =
+                    decorrelated, -1 = anti-phase (mono-fold cancellation).
+                    Cross / auto spectra are EMA-averaged over a longer
+                    window than divergence so the coherence estimate is
+                    stable. Bins where the post signal has no energy carry
+                    the kNoMeasurementDb sentinel.
+
+    --- Divergence ---------------------------------------------------------
+
     Per-frequency device-added stereo divergence.
 
     Divergence at a bin measures how much the device under test made the
@@ -32,6 +47,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <vector>
 
 class StereoAnalysis
@@ -51,20 +67,46 @@ public:
     // hop rate - smooth enough for a steady-state divergence meter.
     static constexpr float kSmoothingAlpha = 0.15f;
 
+    // Slower EMA for the correlation cross / auto spectra. Coherence is a
+    // statistical average; a longer window (~490 ms) settles the estimate.
+    static constexpr float kCorrelationAlpha = 0.08f;
+
     void prepare (int numBins);
     void reset();
 
-    // Computes the device-added stereo divergence from the four spectrum
-    // dB arrays. Real-time-safe.
+    // Computes the device-added stereo divergence and the post-signal L/R
+    // phase correlation. preDb/postDb are the magnitude-dB arrays;
+    // postComplexL/R are interleaved [re, im] pairs (2 floats per bin).
+    // Real-time-safe.
     void update (const float* preDbL,  const float* preDbR,
-                 const float* postDbL, const float* postDbR);
+                 const float* postDbL, const float* postDbR,
+                 const float* postComplexL, const float* postComplexR);
 
-    const std::vector<float>& getDivergence() const noexcept { return divergence; }
+    const std::vector<float>& getDivergence()  const noexcept { return divergence; }
+    const std::vector<float>& getCorrelation() const noexcept { return correlation; }
+
+    // Single-number broadband correlation: the per-bin cross / auto
+    // spectra summed across the spectrum, then normalised. Energy-
+    // weighted (loud frequencies dominate), so it tracks but is not
+    // bit-identical to a time-domain phase meter. kNoMeasurementDb when
+    // no bin carries signal.
+    float getBroadbandCorrelation() const noexcept
+    {
+        return broadbandCorrelation.load (std::memory_order_relaxed);
+    }
 
     int getNumBins() const noexcept { return (int) divergence.size(); }
 
 private:
     std::vector<float> divergence;   // signed |FR_R - FR_L|, per bin
+    std::vector<float> correlation;  // post L/R phase correlation [-1,+1], per bin
+
+    // EMA accumulators for the L/R cross-spectrum and the two auto-spectra.
+    // correlation = avg(crossRe) / sqrt(avg(autoLL) * avg(autoRR)).
+    std::vector<float> crossReAccum;
+    std::vector<float> autoLLAccum;
+    std::vector<float> autoRRAccum;
+    std::vector<char>  correlationSeeded;
 
     // Per-channel device response (post - pre), EMA-smoothed. divergence
     // is derived from this smoothed pair each frame so its sign is stable.
@@ -74,4 +116,8 @@ private:
     // Per-bin hysteresis state for the pre and post signals.
     std::vector<char>  preHasSignal;
     std::vector<char>  postHasSignal;
+
+    // Broadband aggregate of the cross / auto spectra. Written by the
+    // audio thread in update(), read by the display.
+    std::atomic<float> broadbandCorrelation { kNoMeasurementDb };
 };
