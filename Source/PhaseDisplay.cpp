@@ -164,8 +164,13 @@ void PhaseDisplay::drawCurve (juce::Graphics& g, juce::Rectangle<int> area)
                            : processor.phaseResponse.getPhaseDegrees (Ch::R);
     const int N = (int) dataL.size();
 
+    // Shared L / R channel toggles (the editor enforces at least one on).
+    const bool showL = *processor.apvts.getRawParameterValue ("showChannelL") > 0.5f;
+    const bool showR = *processor.apvts.getRawParameterValue ("showChannelR") > 0.5f;
+
     // ---- Y range -------------------------------------------------------
-    // Phase is fixed at +/-180 degrees; group delay auto-ranges in ms.
+    // Phase is fixed at +/-180 degrees; group delay auto-ranges in ms to
+    // the visible channels only.
     float yMin = -180.0f, yMax = 180.0f;
     if (gd)
     {
@@ -174,8 +179,8 @@ void PhaseDisplay::drawCurve (juce::Graphics& g, juce::Rectangle<int> area)
         {
             const float vl = dataL[(size_t) i];
             const float vr = dataR[(size_t) i];
-            if (vl > kValidFloor) { dmin = juce::jmin (dmin, vl); dmax = juce::jmax (dmax, vl); }
-            if (vr > kValidFloor) { dmin = juce::jmin (dmin, vr); dmax = juce::jmax (dmax, vr); }
+            if (showL && vl > kValidFloor) { dmin = juce::jmin (dmin, vl); dmax = juce::jmax (dmax, vl); }
+            if (showR && vr > kValidFloor) { dmin = juce::jmin (dmin, vr); dmax = juce::jmax (dmax, vr); }
         }
         if (dmax < dmin)        { yMin = -1.0f; yMax = 1.0f; }
         else if (dmin >= 0.0f)  { yMin =  0.0f; yMax = niceCeil (juce::jmax (dmax, 1.0e-4f)); }
@@ -279,6 +284,6 @@ void PhaseDisplay::drawCurve (juce::Graphics& g, juce::Rectangle<int> area)
         g.strokePath (path, juce::PathStrokeType (sf (1.6f)));
     };
 
-    strokeChannel (dataR, WTColors::analysis_R);   // R drawn first
-    strokeChannel (dataL, WTColors::analysis);     // L on top
+    if (showR) strokeChannel (dataR, WTColors::analysis_R);   // R drawn first
+    if (showL) strokeChannel (dataL, WTColors::analysis);     // L on top
 }

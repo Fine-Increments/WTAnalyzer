@@ -949,6 +949,17 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
                 "  zero means a constant delay, and bumps mean\n"
                 "  frequency-dependent time smearing. Running the latency\n"
                 "  auto-measure first re-centres it near zero.\n\n"
+                "Phase vs Group Delay\n"
+                "  The two views are one measurement in two forms: group\n"
+                "  delay is the slope of the phase curve, recast from degrees\n"
+                "  into time. Use the Phase view to see the raw angular\n"
+                "  distortion shape; use Group Delay to see how much each\n"
+                "  frequency region is delayed in time - the view that tells\n"
+                "  you whether the device smears transients. Group Delay\n"
+                "  normally looks busier than Phase: a derivative amplifies\n"
+                "  fast variation (and noise), so a gently wavy phase curve\n"
+                "  can have a lively group-delay curve. That is expected,\n"
+                "  not a fault.\n\n"
                 "How to read it\n"
                 "  Green (L) and lime (R) traces are the per-channel curve.\n"
                 "  A linear-phase device reads a flat line in both views; a\n"
@@ -959,9 +970,13 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
                 "  Not yet implemented for this mode. When added, the heatmap\n"
                 "  X axis would be log frequency, Y the sweep position,\n"
                 "  colour the phase or group delay (bipolar).\n\n"
-                "Stereo (L / R / Diff)\n"
-                "  Both channels are always drawn so channel asymmetry stays\n"
-                "  visible; the shared L / R / Diff toggle row is hidden here.\n";
+                "Stereo (L / R)\n"
+                "  The shared L / R toggles pick which channels draw, the\n"
+                "  same as the other 1D-trace modes; group delay auto-ranges\n"
+                "  to the visible channels. There is no Diff toggle - phase\n"
+                "  here is per-channel device behaviour, not a stereo\n"
+                "  difference. The inline readout shows per-channel RMS\n"
+                "  phase deviation.\n";
     }
     return "No help available for this mode.";
 }
@@ -1226,6 +1241,44 @@ WTAnalyzerAudioProcessorEditor::computeImbalanceContent() const
             }
             break;
         }
+
+        case (int) Mode::PhaseResponse:
+        {
+            // RMS of the detrended phase across the band, per channel - a
+            // stable single-number summary of how much phase distortion
+            // each channel carries. Sentinel bins are skipped.
+            auto rmsDeg = [] (const std::vector<float>& arr) -> float
+            {
+                double sumSq = 0.0;
+                int    n     = 0;
+                for (int bin = 1; bin < (int) arr.size(); ++bin)
+                {
+                    const float v = arr[(size_t) bin];
+                    if (v <= -1.0e8f) continue;          // kNoMeasurement
+                    sumSq += (double) v * (double) v;
+                    ++n;
+                }
+                return n > 0 ? (float) std::sqrt (sumSq / (double) n) : -1.0f;
+            };
+
+            const float l = rmsDeg (audioProcessor.phaseResponse.getPhaseDegrees (
+                                        PhaseResponse::Channel::L));
+            const float r = rmsDeg (audioProcessor.phaseResponse.getPhaseDegrees (
+                                        PhaseResponse::Channel::R));
+            c.metric = "RMS phase deviation";
+            if (l < 0.0f && r < 0.0f)
+            {
+                c.lText = "no measurement";
+            }
+            else
+            {
+                c.lText = "L " + juce::String (juce::jmax (0.0f, l), 1) + " deg";
+                c.lColour = anL;
+                c.rText = "R " + juce::String (juce::jmax (0.0f, r), 1) + " deg";
+                c.rColour = anR;
+            }
+            break;
+        }
     }
 
     return c;
@@ -1277,18 +1330,19 @@ void WTAnalyzerAudioProcessorEditor::applyAnalysisMode (int modeIndex)
     // L / R channel toggles: visible in every mode that shows per-channel
     // data. The Diff toggle is restricted to the bar / waveform modes
     // (THD, IMD, IR, Farina) where per-harmonic / per-product / per-sample
-    // R-L difference is genuinely mode-specific. Spectrum modes (Generic
-    // Overlay, FR, Aliasing) no longer have a Diff toggle - dedicated
-    // stereo-difference analysis lives in the Stereo Image mode.
+    // R-L difference is genuinely mode-specific. The 1D-trace modes
+    // (Generic Overlay, FR, Aliasing, Phase Response) have L / R only -
+    // dedicated stereo-difference analysis lives in the Stereo Image mode.
     const bool wantsStereoToggles = wantsSpectrumPath || wantsThdPath
-                                  || wantsImdPath || wantsIrPath || wantsFarinaPath;
+                                  || wantsImdPath || wantsIrPath || wantsFarinaPath
+                                  || wantsPhasePath;
     const bool wantsDiffToggle    = wantsThdPath || wantsImdPath
                                   || wantsIrPath || wantsFarinaPath;
 
-    // Entering a spectrum mode while Diff was left engaged from a bar /
+    // Entering an L/R-only mode while Diff was left engaged from a bar /
     // waveform mode would leave L and R both off (Diff is exclusive),
-    // blanking the spectrum display. Restore the L+R view first.
-    if (wantsSpectrumPath && stereoDiffButton.getToggleState())
+    // blanking the display. Restore the L+R view first.
+    if ((wantsSpectrumPath || wantsPhasePath) && stereoDiffButton.getToggleState())
         stereoDiffButton.setToggleState (false, juce::sendNotification);
 
     stereoLButton    .setVisible (wantsStereoToggles);
