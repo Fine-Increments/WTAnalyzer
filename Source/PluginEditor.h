@@ -21,6 +21,7 @@
 #include "FarinaDisplay.h"
 #include "StereoDisplay.h"
 #include "SweepCurveDisplay.h"
+#include "PhaseDisplay.h"
 #include "LevelMetersPanel.h"
 #include "LatencyPanel.h"
 
@@ -199,6 +200,9 @@ private:
 
     // Parameter Sweep display path - Plugin Doctor style 1D X-Y curve.
     SweepCurveDisplay sweepCurveDisplay;
+
+    // Phase Response display path - phase + group delay over log frequency.
+    PhaseDisplay     phaseDisplay;
 
     // Shown over whichever panel is active when the sidechain input is
     // not connected. Visibility is driven from the timer.

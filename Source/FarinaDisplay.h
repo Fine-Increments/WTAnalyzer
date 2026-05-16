@@ -61,7 +61,7 @@ private:
     juce::Label  sweepLabel { {}, "Sweep" };
     juce::Label  tailLabel  { {}, "Tail" };
 
-    juce::TextButton exportButton { "Export..." };
+    juce::TextButton exportButton { "Export" };
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> f0Attachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> f1Attachment;

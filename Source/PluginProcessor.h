@@ -19,6 +19,7 @@
 #include "Analyses/SweepCapture.h"
 #include "Analyses/SweepCurve.h"
 #include "Analyses/StereoAnalysis.h"
+#include "Analyses/PhaseResponse.h"
 
 //==============================================================================
 /**
@@ -136,9 +137,12 @@ public:
     std::array<float, kSpectrumBins> postSpectrumDb   {};
     std::array<float, kSpectrumBins> postSpectrumDb_R {};
 
-    // Complex (interleaved re/im pairs) post-channel spectra, retained so
-    // the Stereo Image mode's Correlation sub-view can form the L/R
-    // cross-spectrum. Pre channels need magnitude only and stay real.
+    // Complex (interleaved re/im pairs) spectra for all four channels.
+    // The Stereo Image Correlation view forms the post L/R cross-spectrum;
+    // the Phase Response mode forms the pre/post cross-spectrum per channel.
+    // Both need the imaginary part, so every channel keeps its complex form.
+    std::array<float, 2 * kSpectrumBins> preComplexL  {};
+    std::array<float, 2 * kSpectrumBins> preComplexR  {};
     std::array<float, 2 * kSpectrumBins> postComplexL {};
     std::array<float, 2 * kSpectrumBins> postComplexR {};
 
@@ -179,7 +183,8 @@ public:
         DirectImpulseIR   = 5,
         FarinaIR          = 6,
         StereoImage       = 7,
-        ParameterSweep    = 8
+        ParameterSweep    = 8,
+        PhaseResponse     = 9
     };
 
     // First analysis: derived from the existing pre/post spectrum FFT.
@@ -218,6 +223,12 @@ public:
     // pre / post / device-added divergence arrays for the Stereo Image
     // mode's bipolar centred-on-zero display.
     StereoAnalysis stereoAnalysis;
+
+    // Tenth analysis: per-frequency phase response and group delay of the
+    // device under test. Forms the pre/post cross-spectrum from the
+    // retained complex spectra; produces a detrended phase curve and a
+    // group-delay curve for the Phase Response mode.
+    PhaseResponse phaseResponse;
 
     // 2D capture across a sweep axis. Cross-cutting capability, not a
     // mode of its own: when active (`sweepCaptureActive` APVTS bool),

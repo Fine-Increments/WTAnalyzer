@@ -106,8 +106,8 @@ void FarinaDisplay::resized()
     // Export button lives on the far right of the top row. The status
     // text and sweep summary in paint() reserve the same right-margin
     // width so they don't overlap.
-    const int exportW = sx (78);
-    const int exportH = sx (20);
+    const int exportW = sx (60);
+    const int exportH = sx (17);
     exportButton.setBounds (topRow.getRight() - sx (16) - exportW,
                             topRow.getCentreY() - exportH / 2,
                             exportW, exportH);
@@ -170,10 +170,10 @@ void FarinaDisplay::paint (juce::Graphics& g)
     g.setColour (juce::Colours::grey);
     g.setFont (juce::FontOptions (sf (11.0f)));
     // Reserve the right-edge area for the Export button so the summary
-    // text doesn't draw beneath it. 78 px button + 16 px right margin +
-    // 8 px gap before the text = 102 px trimmed.
+    // text doesn't draw beneath it. 60 px button + 16 px right margin +
+    // 8 px gap before the text = 84 px trimmed.
     g.drawText (summary,
-                topRow.withTrimmedRight (sx (102)),
+                topRow.withTrimmedRight (sx (84)),
                 juce::Justification::centredRight, false);
 
     drawWaveform (g, bounds.reduced (sx (24), sx (12)));

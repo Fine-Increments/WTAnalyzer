@@ -47,7 +47,7 @@ private:
     float uiScale = 1.0f;
 
     juce::TextButton clearButton  { "Clear" };
-    juce::TextButton exportButton { "Export..." };
+    juce::TextButton exportButton { "Export" };
     juce::Slider     windowSlider;
     juce::Slider     averagesSlider;
     juce::Label      windowLabel    { {}, "Window" };

@@ -86,17 +86,19 @@ void ImpulseDisplay::resized()
 
     // Bottom row: Clear (top) and Export (bottom) buttons stacked at the
     // far left, then Window and Averages slider rows on the right half.
-    const int buttonW = sx (72);
-    const int buttonH = sx (20);
-    const int centreY = botRow.getCentreY();
-    clearButton .setBounds (botRow.getX() + sx (16),
-                            centreY - buttonH - sx (2),
+    // The stack is centred in botRow so Clear keeps clear of the readout
+    // text in the row above.
+    const int buttonW   = sx (60);
+    const int buttonH   = sx (17);
+    const int buttonGap = sx (3);
+    const int stackTop  = botRow.getY()
+                        + (botRow.getHeight() - (buttonH * 2 + buttonGap)) / 2;
+    clearButton .setBounds (botRow.getX() + sx (16), stackTop,
                             buttonW, buttonH);
-    exportButton.setBounds (botRow.getX() + sx (16),
-                            centreY + sx (2),
+    exportButton.setBounds (botRow.getX() + sx (16), stackTop + buttonH + buttonGap,
                             buttonW, buttonH);
 
-    auto controlArea = botRow.removeFromRight (botRow.getWidth() - sx (96));
+    auto controlArea = botRow.removeFromRight (botRow.getWidth() - sx (84));
     controlArea.removeFromLeft (sx (16));
 
     const int labelW   = sx (60);

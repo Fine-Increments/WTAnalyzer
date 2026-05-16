@@ -77,6 +77,17 @@ Pre-alpha. Working analysis modes:
   recorded per L/R channel bucketed by sweep position. The captured
   curves draw alongside a live dot at the current position; the Y
   axis auto-ranges in percent.
+- **Phase Response** - the phase side of the transfer function,
+  companion to Frequency Response's magnitude. A Phase / Group Delay
+  view selector picks the sub-view. **Phase** plots the per-frequency
+  pre-to-post phase difference as a wrapped +/-180 degree curve, with
+  the bulk linear-phase (latency) component removed automatically by a
+  best-fit line - so it shows the device's real phase distortion
+  regardless of path latency, no manual nulling required. **Group
+  Delay** plots the negated slope of the unwrapped phase in
+  milliseconds (not detrended - true delay). Per-channel L and R
+  traces; reveals linear-phase vs minimum-phase character, all-pass
+  behaviour, and frequency-dependent time smearing.
 
 Both IR modes are shipped but currently bottlenecked by WTSynth as a
 source: the wavetable cycling model produces an impulse train at
@@ -151,8 +162,6 @@ Not yet built:
   - *Parameter-sweep curves* - shipped as the Parameter Sweep mode
     (THD% / IMD% metrics); FR-at-frequency and SNR/SINAD metrics
     still pending.
-  - *Phase response + group delay* (companion charts to FR
-    magnitude).
   - *Cumulative Spectral Decay (CSD)* waterfall.
   - *Compression / dynamics transfer-function curve*.
 - Multisine flatness, step response, transfer function from noise.

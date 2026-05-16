@@ -49,6 +49,10 @@
             file="Source/SweepCurveDisplay.cpp"/>
       <FILE id="SwCv02" name="SweepCurveDisplay.h" compile="0" resource="0"
             file="Source/SweepCurveDisplay.h"/>
+      <FILE id="PhDp01" name="PhaseDisplay.cpp" compile="1" resource="0"
+            file="Source/PhaseDisplay.cpp"/>
+      <FILE id="PhDp02" name="PhaseDisplay.h" compile="0" resource="0"
+            file="Source/PhaseDisplay.h"/>
       <FILE id="Side01" name="SidecarReader.cpp" compile="1" resource="0"
             file="Source/SidecarReader.cpp"/>
       <FILE id="Side02" name="SidecarReader.h" compile="0" resource="0"
@@ -98,6 +102,10 @@
               file="Source/Analyses/SweepCurve.cpp"/>
         <FILE id="SwCv04" name="SweepCurve.h" compile="0" resource="0"
               file="Source/Analyses/SweepCurve.h"/>
+        <FILE id="PhRs01" name="PhaseResponse.cpp" compile="1" resource="0"
+              file="Source/Analyses/PhaseResponse.cpp"/>
+        <FILE id="PhRs02" name="PhaseResponse.h" compile="0" resource="0"
+              file="Source/Analyses/PhaseResponse.h"/>
       </GROUP>
     </GROUP>
   </MAINGROUP>

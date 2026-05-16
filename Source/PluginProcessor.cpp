@@ -43,7 +43,8 @@ WTAnalyzerAudioProcessor::createParameterLayout()
         "Active Analysis",
         juce::StringArray { "Generic Overlay", "Frequency Response", "THD Measurement",
                             "Aliasing Detection", "IMD Measurement", "Direct Impulse IR",
-                            "Farina IR", "Stereo Image", "Parameter Sweep" },
+                            "Farina IR", "Stereo Image", "Parameter Sweep",
+                            "Phase Response" },
         0));
 
     // Level meter mode: false = Peak (default, matches DAW meter behaviour),
@@ -183,6 +184,15 @@ WTAnalyzerAudioProcessor::createParameterLayout()
         juce::StringArray { "THD%", "IMD%" },
         0));
 
+    // Phase Response mode sub-view selector: the detrended phase curve
+    // (degrees) or group delay (ms). Index order matches PhaseDisplay's
+    // view selector.
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { "phaseView", 1 },
+        "Phase Response View",
+        juce::StringArray { "Phase", "Group Delay" },
+        0));
+
     // Stereo display toggles - one set shared across every mode that
     // participates in the L / R / Diff convention (PLANNING.md 8.5.1).
     // L and R are independent on/off; at least one must stay on
@@ -307,6 +317,7 @@ void WTAnalyzerAudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
     aliasingDetection.prepare (kSpectrumBins, binFreqScale);
     imdMeasurement   .prepare (kSpectrumBins, binFreqScale);
     stereoAnalysis   .prepare (kSpectrumBins);
+    phaseResponse    .prepare (kSpectrumBins, binFreqScale);
     impulseResponse  .prepare (sampleRate, samplesPerBlock);
     impulseResponse  .setWindowMs    ((int) *apvts.getRawParameterValue ("irWindowMs"));
     impulseResponse  .setAverageGoal ((int) *apvts.getRawParameterValue ("irAverageCount"));
@@ -349,43 +360,14 @@ void WTAnalyzerAudioProcessor::runLatencyMeasurement()
 
 void WTAnalyzerAudioProcessor::runSpectrumFft()
 {
-    // Hann + real FFT + magnitude conversion, twice (pre and post). The
-    // window is applied to a windowed copy in scratch, so the circular
+    // Hann + real FFT, four times (pre/post, L/R). Every channel retains
+    // its complex (re/im) spectrum: the Stereo Image Correlation view and
+    // the Phase Response mode both form a pre/post cross-spectrum, which
+    // needs the imaginary part. performRealOnlyForwardTransform writes
+    // interleaved [re, im] pairs; bin k lives at scratch[2k], scratch[2k+1].
+    // Magnitude is hypot(re, im), matching performFrequencyOnlyForwardTransform.
+    // The window is applied to a windowed copy in scratch, so the circular
     // buffers themselves stay raw for the next overlap-and-FFT cycle.
-    auto fftOne = [this] (const std::array<float, kSpectrumFftSize>& source,
-                          std::array<float, kSpectrumBins>& outputDb)
-    {
-        std::fill (spectrumScratch.begin(), spectrumScratch.end(), 0.0f);
-
-        for (int i = 0; i < kSpectrumFftSize; ++i)
-        {
-            const int idx = (spectrumWritePos + i) % kSpectrumFftSize;
-            spectrumScratch[i] = source[idx];
-        }
-
-        spectrumWindow.multiplyWithWindowingTable (spectrumScratch.data(),
-                                                   (size_t) kSpectrumFftSize);
-
-        // performFrequencyOnlyForwardTransform with ignoreNegativeFreqs=true
-        // writes |X[k]| for k = 0..N/2 into the first N/2+1 floats. Bins above
-        // N/2 are conjugates of the lower bins for a real signal and don't
-        // need to be computed.
-        spectrumFft.performFrequencyOnlyForwardTransform (spectrumScratch.data(), true);
-
-        // Normalize so a full-scale sine at any (non-DC, non-Nyquist) bin maps
-        // to 0 dB. Factor of 4/N corrects both the FFT scaling (N/2 per side)
-        // and the Hann window's 0.5 coherent gain.
-        constexpr float normFactor = 4.0f / (float) kSpectrumFftSize;
-        for (int bin = 0; bin < kSpectrumBins; ++bin)
-            outputDb[bin] = juce::Decibels::gainToDecibels (spectrumScratch[bin] * normFactor,
-                                                            -120.0f);
-    };
-
-    // Post channels additionally retain their complex spectra: the Stereo
-    // Image mode's Correlation sub-view needs the L/R re/im pairs to form
-    // a cross-spectrum. performRealOnlyForwardTransform writes interleaved
-    // [re, im] pairs; bin k lives at scratch[2k], scratch[2k+1]. Magnitude
-    // is hypot(re, im), matching performFrequencyOnlyForwardTransform.
     auto fftComplexOne = [this] (const std::array<float, kSpectrumFftSize>& source,
                                  std::array<float, kSpectrumBins>& outputDb,
                                  std::array<float, 2 * kSpectrumBins>& outputComplex)
@@ -415,8 +397,8 @@ void WTAnalyzerAudioProcessor::runSpectrumFft()
         }
     };
 
-    fftOne        (spectrumPreBuffer,    preSpectrumDb);                  // L
-    fftOne        (spectrumPreBuffer_R,  preSpectrumDb_R);                // R
+    fftComplexOne (spectrumPreBuffer,    preSpectrumDb,    preComplexL);  // L
+    fftComplexOne (spectrumPreBuffer_R,  preSpectrumDb_R,  preComplexR);  // R
     fftComplexOne (spectrumPostBuffer,   postSpectrumDb,   postComplexL); // L
     fftComplexOne (spectrumPostBuffer_R, postSpectrumDb_R, postComplexR); // R
 
@@ -435,6 +417,7 @@ void WTAnalyzerAudioProcessor::runSpectrumFft()
         impulseResponse  .reset();
         farinaIR         .reset();
         stereoAnalysis   .reset();
+        phaseResponse    .reset();
         lastActiveAnalysisIndex = activeIndex;
     }
 
@@ -545,6 +528,12 @@ void WTAnalyzerAudioProcessor::runSpectrumFft()
         {
             sweepCurve.captureFrame (position, vL, vR);
         }
+    }
+    else if (activeIndex == (int) AnalysisMode::PhaseResponse)
+    {
+        phaseResponse.update (preSpectrumDb.data(),  preSpectrumDb_R.data(),
+                              preComplexL.data(),    preComplexR.data(),
+                              postComplexL.data(),   postComplexR.data());
     }
 
     spectrumFrameCount.fetch_add (1, std::memory_order_release);

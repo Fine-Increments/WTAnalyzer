@@ -58,6 +58,7 @@ WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioP
       farinaDisplay        (p),
       stereoDisplay        (p),
       sweepCurveDisplay    (p),
+      phaseDisplay         (p),
       levelMetersPanel     (p),
       latencyPanel         (p)
 {
@@ -72,6 +73,7 @@ WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioP
     addChildComponent (farinaDisplay);
     addChildComponent (stereoDisplay);
     addChildComponent (sweepCurveDisplay);
+    addChildComponent (phaseDisplay);
     addAndMakeVisible (levelMetersPanel);
     addAndMakeVisible (latencyPanel);
 
@@ -321,6 +323,7 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeName (int modeIndex)
         case Mode::FarinaIR:          return "Farina IR";
         case Mode::StereoImage:       return "Stereo Image";
         case Mode::ParameterSweep:    return "Parameter Sweep";
+        case Mode::PhaseResponse:     return "Phase Response";
     }
     return "Analysis";
 }
@@ -916,6 +919,49 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
                 "Stereo (L / R / Diff)\n"
                 "  Both channels are always drawn so channel asymmetry stays\n"
                 "  visible; the shared L / R / Diff toggle row is hidden here.\n";
+
+        case Mode::PhaseResponse:
+            return
+                "Phase Response\n"
+                "==============\n\n"
+                "What it measures\n"
+                "  The phase side of the transfer function - the companion to\n"
+                "  the magnitude shown in Frequency Response mode. A header\n"
+                "  selector picks the sub-view: Phase or Group Delay.\n\n"
+                "Input\n"
+                "  Any broadband signal - pink noise, a sweep, multitone.\n"
+                "  Phase is only measurable where the input has energy; the\n"
+                "  richer the frequency coverage, the more of the curve is\n"
+                "  filled in.\n\n"
+                "Phase view\n"
+                "  Per-frequency phase difference between post and pre,\n"
+                "  formed from the cross-spectrum and drawn as a wrapped\n"
+                "  +/-180 degree curve over log frequency. The bulk\n"
+                "  linear-phase component - the straight ramp that any pure\n"
+                "  delay adds - is removed automatically by a best-fit line,\n"
+                "  so the curve shows the device's actual phase distortion\n"
+                "  regardless of how much latency sits in the path. You do\n"
+                "  NOT need to null latency first for this view.\n\n"
+                "Group Delay view\n"
+                "  The negated slope of the unwrapped phase, in milliseconds,\n"
+                "  over log frequency. Unlike the Phase view this is NOT\n"
+                "  detrended - it shows true delay, so a flat trace away from\n"
+                "  zero means a constant delay, and bumps mean\n"
+                "  frequency-dependent time smearing. Running the latency\n"
+                "  auto-measure first re-centres it near zero.\n\n"
+                "How to read it\n"
+                "  Green (L) and lime (R) traces are the per-channel curve.\n"
+                "  A linear-phase device reads a flat line in both views; a\n"
+                "  minimum-phase EQ shows phase swing around its corners and\n"
+                "  a group-delay bump there; an all-pass shows phase motion\n"
+                "  with no magnitude change in FR mode.\n\n"
+                "2D Sweep Capture\n"
+                "  Not yet implemented for this mode. When added, the heatmap\n"
+                "  X axis would be log frequency, Y the sweep position,\n"
+                "  colour the phase or group delay (bipolar).\n\n"
+                "Stereo (L / R / Diff)\n"
+                "  Both channels are always drawn so channel asymmetry stays\n"
+                "  visible; the shared L / R / Diff toggle row is hidden here.\n";
     }
     return "No help available for this mode.";
 }
@@ -1199,6 +1245,7 @@ void WTAnalyzerAudioProcessorEditor::applyAnalysisMode (int modeIndex)
     const bool wantsFarinaPath   = (modeIndex == (int) Mode::FarinaIR);
     const bool wantsStereoPath   = (modeIndex == (int) Mode::StereoImage);
     const bool wantsSweepPath    = (modeIndex == (int) Mode::ParameterSweep);
+    const bool wantsPhasePath    = (modeIndex == (int) Mode::PhaseResponse);
 
     spectrumDisplay  .setVisible (wantsSpectrumPath);
     cursorReadout    .setVisible (wantsSpectrumPath);
@@ -1208,6 +1255,7 @@ void WTAnalyzerAudioProcessorEditor::applyAnalysisMode (int modeIndex)
     farinaDisplay    .setVisible (wantsFarinaPath);
     stereoDisplay    .setVisible (wantsStereoPath);
     sweepCurveDisplay.setVisible (wantsSweepPath);
+    phaseDisplay     .setVisible (wantsPhasePath);
 
     // The alias-view toggle row lives inside SpectrumDisplay (it's tied to
     // a specific mode within the shared spectrum panel) but its visibility
@@ -1281,6 +1329,7 @@ void WTAnalyzerAudioProcessorEditor::resized()
     farinaDisplay   .setUiScale (s);
     stereoDisplay   .setUiScale (s);
     sweepCurveDisplay.setUiScale (s);
+    phaseDisplay    .setUiScale (s);
     sidechainNotice .setUiScale (s);
     levelMetersPanel.setUiScale (s);
     latencyPanel    .setUiScale (s);
@@ -1354,6 +1403,7 @@ void WTAnalyzerAudioProcessorEditor::resized()
     farinaDisplay    .setBounds (bounds);
     stereoDisplay    .setBounds (bounds);
     sweepCurveDisplay.setBounds (bounds);
+    phaseDisplay     .setBounds (bounds);
 
     // The sidechain notice covers the whole display rect.
     sidechainNotice.setBounds (bounds);
