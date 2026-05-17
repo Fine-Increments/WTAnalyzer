@@ -48,6 +48,9 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
+    void mouseMove (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override;
+
 private:
     void timerCallback() override;
     void parameterChanged (const juce::String& parameterID, float newValue) override;
@@ -82,6 +85,16 @@ private:
     // when the Goniometer sub-view is active.
     juce::TextButton gonioPrePostButton { "Pre / Post" };
     juce::TextButton gonioDiffButton    { "Difference" };
+
+    // Last mouse position over the panel and whether the pointer is
+    // inside it. The freq-axis sub-views (Divergence, Correlation)
+    // turn this into the cursor readout strip below the plot.
+    juce::Point<int> cursorPos;
+    bool             cursorInside = false;
+
+    // Cursor readout text, recomputed each paint by the active sub-view
+    // and drawn in the strip below the plot.
+    juce::String     hoverText;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (StereoDisplay)
 };

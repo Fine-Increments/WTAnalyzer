@@ -160,7 +160,7 @@ void SpectrumDisplay::layoutAliasingViewButtons (juce::Rectangle<int> plotArea)
 juce::Rectangle<int> SpectrumDisplay::getPlotArea() const noexcept
 {
     auto fullArea = getLocalBounds();
-    const int dbGutter   = sx (34);
+    const int dbGutter   = sx (42);
     const int freqGutter = sx (16);
     fullArea.removeFromBottom (freqGutter);
     fullArea.removeFromLeft  (dbGutter);
@@ -189,7 +189,7 @@ void SpectrumDisplay::resetView() noexcept
 
 SpectrumDisplay::DragZone SpectrumDisplay::zoneFromPoint (juce::Point<int> p) const noexcept
 {
-    const int dbGutterRight  = sx (34);
+    const int dbGutterRight  = sx (42);
     const int freqGutterTop  = getHeight() - sx (16);
 
     if (p.getX() < dbGutterRight)  return DragZone::DbAxis;
@@ -333,7 +333,7 @@ void SpectrumDisplay::paint (juce::Graphics& g)
     g.setColour (juce::Colour (0xff111213));
     g.fillRect (fullArea);
 
-    const int dbGutter   = sx (34);
+    const int dbGutter   = sx (42);
     const int freqGutter = sx (16);
 
     auto labelGutterBottom = fullArea.removeFromBottom (freqGutter);
@@ -351,9 +351,9 @@ void SpectrumDisplay::paint (juce::Graphics& g)
     const float logMax   = std::log10 (viewMaxFreq);
     const float logRange = logMax - logMin;
 
-    // L / R channel toggles. The spectrum modes (Generic Overlay, FR,
-    // Aliasing) show per-channel traces; stereo difference analysis lives
-    // in its own dedicated Stereo Image mode, not here.
+    // L / R channel toggles. The spectrum modes (FR, Aliasing) show
+    // per-channel traces; stereo difference analysis lives in its own
+    // dedicated Stereo Image mode, not here.
     const bool showL = *processor.apvts.getRawParameterValue ("showChannelL") > 0.5f;
     const bool showR = *processor.apvts.getRawParameterValue ("showChannelR") > 0.5f;
 
@@ -500,7 +500,7 @@ void SpectrumDisplay::paint (juce::Graphics& g)
             const int textHeight = sx (12);
             juce::Rectangle<int> r (labelGutterLeft.getX(),
                                     (int) y - textHeight / 2,
-                                    labelGutterLeft.getWidth() - sx (4),
+                                    labelGutterLeft.getWidth() - sx (11),
                                     textHeight);
             juce::String txt;
             if (std::abs (db) < dbTickStep * 0.5f)
@@ -523,7 +523,7 @@ void SpectrumDisplay::paint (juce::Graphics& g)
             const int textHeight = sx (12);
             juce::Rectangle<int> r (labelGutterLeft.getX(),
                                     (int) y - textHeight / 2,
-                                    labelGutterLeft.getWidth() - sx (4),
+                                    labelGutterLeft.getWidth() - sx (11),
                                     textHeight);
             g.drawText (label.text, r, juce::Justification::centredRight, false);
         }

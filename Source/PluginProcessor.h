@@ -21,6 +21,7 @@
 #include "Analyses/SweepGrid.h"
 #include "Analyses/StereoAnalysis.h"
 #include "Analyses/PhaseResponse.h"
+#include "Analyses/DynamicsCurve.h"
 
 //==============================================================================
 /**
@@ -176,16 +177,16 @@ public:
     // here must match the StringArray order in createParameterLayout.
     enum class AnalysisMode
     {
-        GenericOverlay    = 0,
-        FrequencyResponse = 1,
-        THDMeasurement    = 2,
-        AliasingDetection = 3,
-        IMDMeasurement    = 4,
-        DirectImpulseIR   = 5,
-        FarinaIR          = 6,
-        StereoImage       = 7,
-        ParameterSweep    = 8,
-        PhaseResponse     = 9
+        FrequencyResponse = 0,
+        THDMeasurement    = 1,
+        AliasingDetection = 2,
+        IMDMeasurement    = 3,
+        DirectImpulseIR   = 4,
+        FarinaIR          = 5,
+        StereoImage       = 6,
+        ParameterSweep    = 7,
+        PhaseResponse     = 8,
+        Dynamics          = 9
     };
 
     // First analysis: derived from the existing pre/post spectrum FFT.
@@ -248,6 +249,14 @@ public:
     // metric's full per-frame row (THD per-harmonic / IMD per-product
     // differential dB) is recorded per bucket for the heatmap view.
     SweepGrid sweepGrid;
+
+    // Dynamics transfer curve. Drives the Dynamics mode: each block's
+    // pre-effect RMS level (dB) is binned on the input axis and the
+    // matching post-effect RMS level folded into that bin's running
+    // mean, producing the device's static input-vs-output transfer
+    // curve - the shape that reveals compression, expansion, gating
+    // and limiting. Accumulates continuously while the mode is active.
+    DynamicsCurve dynamicsCurve;
 
     // Sidecar JSON reader: parameter-source for analyses that need to
     // know exactly what test signal the script generated (PLANNING.md

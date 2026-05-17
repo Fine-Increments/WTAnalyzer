@@ -108,6 +108,19 @@ void SweepCurveDisplay::timerCallback()
     repaint();
 }
 
+void SweepCurveDisplay::mouseMove (const juce::MouseEvent& e)
+{
+    cursorPos    = e.getPosition();
+    cursorInside = true;
+    repaint();
+}
+
+void SweepCurveDisplay::mouseExit (const juce::MouseEvent&)
+{
+    cursorInside = false;
+    repaint();
+}
+
 void SweepCurveDisplay::parameterChanged (const juce::String& parameterID, float /*newValue*/)
 {
     if (parameterID == "sweepMetric" || parameterID == "sweepView")
@@ -193,10 +206,19 @@ void SweepCurveDisplay::paint (juce::Graphics& g)
     g.fillRect (bounds);
 
     bounds.removeFromTop (sx (36));   // header band - owned by the buttons
-    auto area = bounds.reduced (sx (8), sx (8));
+    auto readoutRow = bounds.removeFromBottom (sx (18));
+    auto area       = bounds.reduced (sx (8), sx (8));
+
+    hoverText.clear();
 
     if (currentView() == View::Heatmap) drawHeatmap (g, area);
     else                                drawLine    (g, area);
+
+    // Cursor readout strip below the plot (the active view sets it).
+    g.setColour (juce::Colours::grey);
+    g.setFont (juce::FontOptions (sf (11.0f)));
+    g.drawText (hoverText, readoutRow.withTrimmedLeft (sx (8)),
+                juce::Justification::centredLeft, false);
 }
 
 void SweepCurveDisplay::drawLine (juce::Graphics& g, juce::Rectangle<int> area)
@@ -261,19 +283,30 @@ void SweepCurveDisplay::drawLine (juce::Graphics& g, juce::Rectangle<int> area)
         const int   y    = juce::roundToInt (valToY (yVal));
         juce::Rectangle<int> r (labelGutterLeft.getX(), y - sx (6),
                                 labelGutterLeft.getWidth() - sx (4), sx (12));
-        g.drawText (formatTick (yVal, yDecimals), r,
-                    juce::Justification::centredRight, false);
+        // The topmost tick slot carries the "%" unit caption instead of
+        // the number, so the caption never overlaps the top value.
+        g.drawText (i == 4 ? juce::String ("%") : formatTick (yVal, yDecimals),
+                    r, juce::Justification::centredRight, false);
 
-        const int x = juce::roundToInt (posToX ((float) i / 4.0f));
+        const float frac = (float) i / 4.0f;
+        const int   x    = juce::roundToInt (posToX (frac));
+        // Clamp the end labels inside the plot: leftmost left-justified,
+        // rightmost right-justified, so neither is clipped by the edge.
         juce::Rectangle<int> xr (x - sx (16), labelGutterBottom.getY(),
                                  sx (32), labelGutterBottom.getHeight());
-        g.drawText (formatTick ((float) i / 4.0f, 2), xr,
-                    juce::Justification::centredTop, false);
+        juce::Justification just = juce::Justification::centredTop;
+        if (i == 0)
+        {
+            xr.setX (x);
+            just = juce::Justification::topLeft;
+        }
+        else if (i == 4)
+        {
+            xr.setX (x - sx (32));
+            just = juce::Justification::topRight;
+        }
+        g.drawText (formatTick (frac, 2), xr, just, false);
     }
-
-    g.drawText ("%", juce::Rectangle<int> (labelGutterLeft.getX(), plotArea.getY() - sx (2),
-                                           labelGutterLeft.getWidth() - sx (4), sx (12)),
-                juce::Justification::centredRight, false);
 
     // ---- Captured curves -----------------------------------------------
     auto strokeCurve = [&] (bool rightChannel, juce::Colour colour)
@@ -317,6 +350,19 @@ void SweepCurveDisplay::drawLine (juce::Graphics& g, juce::Rectangle<int> area)
 
     liveDot (liveR, WTColors::analysis_R);
     liveDot (liveL, WTColors::analysis);
+
+    // ---- Cursor readout ------------------------------------------------
+    if (cursorInside && plotArea.contains (cursorPos))
+    {
+        const float tx = (float) (cursorPos.x - plotArea.getX())
+                            / (float) plotArea.getWidth();
+        const float ty = (float) (cursorPos.y - plotArea.getY())
+                            / (float) plotArea.getHeight();
+        const float pos = juce::jlimit (0.0f, 1.0f, tx);
+        const float val = yMax * (1.0f - juce::jlimit (0.0f, 1.0f, ty));
+        hoverText = "pos " + juce::String (pos, 2) + "    "
+                  + juce::String (val, 3) + "%";
+    }
 }
 
 void SweepCurveDisplay::drawHeatmap (juce::Graphics& g, juce::Rectangle<int> area)
@@ -405,5 +451,20 @@ void SweepCurveDisplay::drawHeatmap (juce::Graphics& g, juce::Rectangle<int> are
                     juce::Rectangle<int> (cxc - sx (22), labelGutterBottom.getY(),
                                           sx (44), labelGutterBottom.getHeight()),
                     juce::Justification::centredTop, false);
+    }
+
+    // ---- Cursor readout ------------------------------------------------
+    if (cursorInside && plotArea.contains (cursorPos))
+    {
+        const float tx = (float) (cursorPos.x - plotArea.getX()) / pW;
+        const float ty = (float) (plotArea.getBottom() - cursorPos.y) / pH;
+        const int   col = juce::jlimit (0, numCols - 1,
+                                        (int) (juce::jlimit (0.0f, 0.999f, tx)
+                                               * (float) numCols));
+        const float pos = juce::jlimit (0.0f, 1.0f, ty);
+        const juce::String colLabel = isThd
+            ? "harmonic " + juce::String (col + 2)
+            : "product "  + juce::String (processor.imdMeasurement.getProductLabel (col));
+        hoverText = colLabel + "    pos " + juce::String (pos, 2);
     }
 }

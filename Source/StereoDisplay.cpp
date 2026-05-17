@@ -19,6 +19,16 @@ namespace
     constexpr float kDivMinDb = -30.0f;  // bottom       = L louder
 
     constexpr float kViewMinHz = 20.0f;
+
+    // Height of the cursor readout strip below the plot.
+    constexpr int kReadoutH = 18;
+
+    juce::String formatHz (float hz)
+    {
+        if (hz >= 1000.0f)
+            return juce::String (hz / 1000.0f, hz >= 10000.0f ? 1 : 2) + " kHz";
+        return juce::String (juce::roundToInt (hz)) + " Hz";
+    }
 }
 
 StereoDisplay::StereoDisplay (WTAnalyzerAudioProcessor& proc)
@@ -67,6 +77,19 @@ void StereoDisplay::setUiScale (float newScale) noexcept
 
 void StereoDisplay::timerCallback()
 {
+    repaint();
+}
+
+void StereoDisplay::mouseMove (const juce::MouseEvent& e)
+{
+    cursorPos    = e.getPosition();
+    cursorInside = true;
+    repaint();
+}
+
+void StereoDisplay::mouseExit (const juce::MouseEvent&)
+{
+    cursorInside = false;
     repaint();
 }
 
@@ -148,7 +171,10 @@ void StereoDisplay::paint (juce::Graphics& g)
     g.fillRect (bounds);
 
     bounds.removeFromTop (sx (36));   // header band - owned by the view buttons
-    auto plotArea = bounds.reduced (sx (8), sx (8));
+    auto readoutRow = bounds.removeFromBottom (sx (kReadoutH));
+    auto plotArea   = bounds.reduced (sx (8), sx (8));
+
+    hoverText.clear();
 
     switch (currentSubView())
     {
@@ -156,6 +182,12 @@ void StereoDisplay::paint (juce::Graphics& g)
         case SubView::Correlation: drawCorrelation (g, plotArea); break;
         case SubView::Goniometer:  drawGoniometer (g, plotArea);  break;
     }
+
+    // Cursor readout strip below the plot (freq-axis sub-views set it).
+    g.setColour (juce::Colours::grey);
+    g.setFont (juce::FontOptions (sf (11.0f)));
+    g.drawText (hoverText, readoutRow.withTrimmedLeft (sx (8)),
+                juce::Justification::centredLeft, false);
 }
 
 void StereoDisplay::drawDivergence (juce::Graphics& g, juce::Rectangle<int> area)
@@ -207,7 +239,7 @@ void StereoDisplay::drawDivergence (juce::Graphics& g, juce::Rectangle<int> area
         else if (db < 0.0f) text = juce::String ((int) -db) + " L";
         else                text = "0";
         juce::Rectangle<int> r (labelGutterLeft.getX(), y - sx (6),
-                                labelGutterLeft.getWidth() - sx (4), sx (12));
+                                labelGutterLeft.getWidth() - sx (11), sx (12));
         g.drawText (text, r, juce::Justification::centredRight, false);
     }
 
@@ -299,6 +331,20 @@ void StereoDisplay::drawDivergence (juce::Graphics& g, juce::Rectangle<int> area
     g.setColour (WTColors::analysis);
     g.drawLine ((float) plotArea.getX(), (float) zeroY,
                 (float) plotArea.getRight(), (float) zeroY, sf (1.5f));
+
+    // ---- Cursor readout ------------------------------------------------
+    if (cursorInside && plotArea.contains (cursorPos))
+    {
+        const float tx = (float) (cursorPos.x - plotArea.getX())
+                            / (float) plotArea.getWidth();
+        const float ty = (float) (cursorPos.y - plotArea.getY())
+                            / (float) plotArea.getHeight();
+        const float hz = std::pow (10.0f, logMin + juce::jlimit (0.0f, 1.0f, tx) * logRange);
+        const float db = kDivMinDb + (1.0f - juce::jlimit (0.0f, 1.0f, ty)) * dbRange;
+        const juce::String side = db > 0.05f ? " R" : (db < -0.05f ? " L" : "");
+        hoverText = formatHz (hz) + "    " + juce::String (std::abs (db), 1)
+                  + " dB" + side;
+    }
 }
 
 void StereoDisplay::drawCorrelation (juce::Graphics& g, juce::Rectangle<int> area)
@@ -348,7 +394,7 @@ void StereoDisplay::drawCorrelation (juce::Graphics& g, juce::Rectangle<int> are
         else if (c < 0.0f) text = juce::String (c, 1);
         else               text = "0";
         juce::Rectangle<int> r (labelGutterLeft.getX(), y - sx (6),
-                                labelGutterLeft.getWidth() - sx (4), sx (12));
+                                labelGutterLeft.getWidth() - sx (11), sx (12));
         g.drawText (text, r, juce::Justification::centredRight, false);
     }
 
@@ -424,6 +470,19 @@ void StereoDisplay::drawCorrelation (juce::Graphics& g, juce::Rectangle<int> are
     g.drawText ("Broadband", hudInner, juce::Justification::centredLeft, false);
     g.setColour (WTColors::analysis);
     g.drawText (bbValue, hudInner, juce::Justification::centredRight, false);
+
+    // ---- Cursor readout ------------------------------------------------
+    if (cursorInside && plotArea.contains (cursorPos))
+    {
+        const float tx = (float) (cursorPos.x - plotArea.getX())
+                            / (float) plotArea.getWidth();
+        const float ty = (float) (cursorPos.y - plotArea.getY())
+                            / (float) plotArea.getHeight();
+        const float hz   = std::pow (10.0f, logMin + juce::jlimit (0.0f, 1.0f, tx) * logRange);
+        const float corr = 1.0f - 2.0f * juce::jlimit (0.0f, 1.0f, ty);
+        hoverText = formatHz (hz) + "    corr "
+                  + (corr >= 0.0f ? "+" : "") + juce::String (corr, 2);
+    }
 }
 
 void StereoDisplay::drawGoniometer (juce::Graphics& g, juce::Rectangle<int> area)

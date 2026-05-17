@@ -53,6 +53,10 @@
             file="Source/PhaseDisplay.cpp"/>
       <FILE id="PhDp02" name="PhaseDisplay.h" compile="0" resource="0"
             file="Source/PhaseDisplay.h"/>
+      <FILE id="DyDp01" name="DynamicsDisplay.cpp" compile="1" resource="0"
+            file="Source/DynamicsDisplay.cpp"/>
+      <FILE id="DyDp02" name="DynamicsDisplay.h" compile="0" resource="0"
+            file="Source/DynamicsDisplay.h"/>
       <FILE id="CSDv01" name="CSDView.cpp" compile="1" resource="0"
             file="Source/CSDView.cpp"/>
       <FILE id="CSDv02" name="CSDView.h" compile="0" resource="0"
@@ -114,6 +118,10 @@
               file="Source/Analyses/PhaseResponse.cpp"/>
         <FILE id="PhRs02" name="PhaseResponse.h" compile="0" resource="0"
               file="Source/Analyses/PhaseResponse.h"/>
+        <FILE id="DyCv01" name="DynamicsCurve.cpp" compile="1" resource="0"
+              file="Source/Analyses/DynamicsCurve.cpp"/>
+        <FILE id="DyCv02" name="DynamicsCurve.h" compile="0" resource="0"
+              file="Source/Analyses/DynamicsCurve.h"/>
         <FILE id="CSDa01" name="CSD.cpp" compile="1" resource="0"
               file="Source/Analyses/CSD.cpp"/>
         <FILE id="CSDa02" name="CSD.h" compile="0" resource="0"

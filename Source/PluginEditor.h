@@ -22,6 +22,7 @@
 #include "StereoDisplay.h"
 #include "SweepCurveDisplay.h"
 #include "PhaseDisplay.h"
+#include "DynamicsDisplay.h"
 #include "LevelMetersPanel.h"
 #include "LatencyPanel.h"
 
@@ -33,6 +34,16 @@
 class WTLookAndFeel  : public juce::LookAndFeel_V4
 {
 public:
+    WTLookAndFeel()
+    {
+        // Every toggle button (view selectors, on/off actions) reads as
+        // engaged via a light fill with dark text - a clear, consistent
+        // active state across all modes. The stock dark-on-dark on-state
+        // was nearly indistinguishable from the inactive buttons.
+        setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffcfd2d6));
+        setColour (juce::TextButton::textColourOnId,   juce::Colours::black);
+    }
+
     void setUiScale (float newScale) noexcept { uiScale = newScale; }
 
     juce::Font getTextButtonFont (juce::TextButton&, int /*buttonHeight*/) override
@@ -179,7 +190,7 @@ private:
     WTAnalyzerAudioProcessor& audioProcessor;
     WTLookAndFeel lookAndFeel;
 
-    // Spectrum-based display path (Generic Overlay, Frequency Response).
+    // Spectrum-based display path (Frequency Response, Aliasing Detection).
     SpectrumDisplay  spectrumDisplay;
     CursorReadout    cursorReadout;
 
@@ -203,6 +214,9 @@ private:
 
     // Phase Response display path - phase + group delay over log frequency.
     PhaseDisplay     phaseDisplay;
+
+    // Dynamics display path - the device's input-vs-output transfer curve.
+    DynamicsDisplay  dynamicsDisplay;
 
     // Shown over whichever panel is active when the sidechain input is
     // not connected. Visibility is driven from the timer.

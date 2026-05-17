@@ -38,6 +38,9 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
+    void mouseMove (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override;
+
 private:
     void timerCallback() override;
     void parameterChanged (const juce::String& parameterID, float newValue) override;
@@ -53,6 +56,15 @@ private:
 
     WTAnalyzerAudioProcessor& processor;
     float uiScale = 1.0f;
+
+    // Last mouse position over the panel and whether the pointer is
+    // inside it. Drives the cursor readout strip below the plot.
+    juce::Point<int> cursorPos;
+    bool             cursorInside = false;
+
+    // Cursor readout text, recomputed each paint and drawn in the strip
+    // below the plot.
+    juce::String     hoverText;
 
     juce::TextButton phaseButton      { "Phase" };
     juce::TextButton groupDelayButton { "Group Delay" };

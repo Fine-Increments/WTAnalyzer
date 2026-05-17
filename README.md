@@ -14,9 +14,6 @@ characterized.
 
 Pre-alpha. Working analysis modes:
 
-- **Generic Overlay** - live pre + post FFT spectra overlaid on a log
-  frequency / dB plot. Zone-aware mouse zoom (drag in each axis gutter
-  zooms that axis only; drag in the plot zooms both).
 - **Frequency Response** - per-bin transfer function `post_dB - pre_dB`
   drawn as a green trace on top of the spectrum. Bins where pre is too
   quiet are flagged as no-measurement and break the path.
@@ -98,6 +95,15 @@ Pre-alpha. Working analysis modes:
   milliseconds (not detrended - true delay). Per-channel L and R
   traces; reveals linear-phase vs minimum-phase character, all-pass
   behaviour, and frequency-dependent time smearing.
+- **Dynamics** - the device's static input-vs-output transfer curve.
+  Each processed block contributes one point: its pre-effect RMS level
+  (X, dB) paired with its post-effect RMS level (Y, dB). Feed a slow
+  amplitude ramp through the device and the curve fills in across the
+  input range, each input-level bin averaging every block that lands
+  in it. A 45-degree unity diagonal is the reference - curve below it
+  at high input is compression / limiting, below it at low input is
+  expansion / gating. Per-channel L and R traces; accumulates
+  continuously with a Clear button to start a fresh trace.
 
 Both IR modes are shipped but currently bottlenecked by WTSynth as a
 source: the wavetable cycling model produces an impulse train at
@@ -143,8 +149,8 @@ Stereo support (shipped):
   pre, periwinkle violet post, chartreuse analysis) so the master
   identity stays readable when R is layered on top. R is the lighter
   sibling in the same family (amber pre, cyan post, green analysis).
-- Display convention: in 1D trace modes (Generic Overlay, FR,
-  Aliasing, both IR modes) R draws first, L on top, Diff overlaid
+- Display convention: in 1D trace modes (FR, Aliasing, Phase,
+  Dynamics, both IR modes) R draws first, L on top, Diff overlaid
   additively in whitesmoke. In bar-chart modes (THD, IMD) each
   category slot subdivides into paired L / R sub-bars with an
   optional Diff sub-bar. Mono signals overlap pixel-for-pixel.
@@ -172,7 +178,8 @@ Not yet built:
   - *Parameter-sweep curves* - shipped as the Parameter Sweep mode
     (THD% / IMD% metrics); FR-at-frequency and SNR/SINAD metrics
     still pending.
-  - *Compression / dynamics transfer-function curve*.
+  - *Compression / dynamics transfer-function curve* - shipped as the
+    Dynamics mode.
 - Multisine flatness, step response, transfer function from noise.
 - **Sidecar-driven parameter pre-fill** - the SidecarReader
   infrastructure exists but no analysis consumes its parameters

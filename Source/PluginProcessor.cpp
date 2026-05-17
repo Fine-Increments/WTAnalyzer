@@ -41,10 +41,10 @@ WTAnalyzerAudioProcessor::createParameterLayout()
     layout.add (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { "activeAnalysis", 1 },
         "Active Analysis",
-        juce::StringArray { "Generic Overlay", "Frequency Response", "THD Measurement",
+        juce::StringArray { "Frequency Response", "THD Measurement",
                             "Aliasing Detection", "IMD Measurement", "Direct Impulse IR",
                             "Farina IR", "Stereo Image", "Parameter Sweep",
-                            "Phase Response" },
+                            "Phase Response", "Dynamics" },
         0));
 
     // Level meter mode: false = Peak (default, matches DAW meter behaviour),
@@ -424,8 +424,6 @@ void WTAnalyzerAudioProcessor::runSpectrumFft()
 
     // Drive the active analysis from the same spectrum data. Selective
     // execution per PRINCIPLES.md section 9: only the active analysis runs.
-    // The Generic Overlay mode (index 0) needs nothing beyond the pre/post
-    // dB arrays we just produced for the universal spectrum overlay.
     const int activeIndex = (int) *apvts.getRawParameterValue ("activeAnalysis");
 
     if (activeIndex != lastActiveAnalysisIndex)
@@ -438,6 +436,7 @@ void WTAnalyzerAudioProcessor::runSpectrumFft()
         farinaIR         .reset();
         stereoAnalysis   .reset();
         phaseResponse    .reset();
+        dynamicsCurve    .reset();
         lastActiveAnalysisIndex = activeIndex;
     }
 
@@ -800,6 +799,21 @@ void WTAnalyzerAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     if (auto* ph = getPlayHead())
         if (auto posInfo = ph->getPosition())
             transportPlaying = posInfo->getIsPlaying();
+
+    // Dynamics transfer curve: when the mode is active and the pre bus is
+    // wired, bin this block's pre-effect RMS level and fold the matching
+    // post-effect level into that bin's running mean. The per-block RMS
+    // values were stored just above; a slow amplitude ramp through the
+    // device walks the bins and the static transfer curve emerges.
+    if (activeIndexLocal == (int) AnalysisMode::Dynamics
+        && preActive && postChans > 0)
+    {
+        dynamicsCurve.captureFrame (
+            preEffectLevelDb   .load (std::memory_order_relaxed),
+            postEffectLevelDb  .load (std::memory_order_relaxed),
+            preEffectLevelDb_R .load (std::memory_order_relaxed),
+            postEffectLevelDb_R.load (std::memory_order_relaxed));
+    }
 
     // Poll window / average params each block so UI changes take effect
     // promptly. Cheap; only invalidates state if values actually changed.

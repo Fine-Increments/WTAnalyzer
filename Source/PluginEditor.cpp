@@ -59,6 +59,7 @@ WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioP
       stereoDisplay        (p),
       sweepCurveDisplay    (p),
       phaseDisplay         (p),
+      dynamicsDisplay      (p),
       levelMetersPanel     (p),
       latencyPanel         (p)
 {
@@ -74,6 +75,7 @@ WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioP
     addChildComponent (stereoDisplay);
     addChildComponent (sweepCurveDisplay);
     addChildComponent (phaseDisplay);
+    addChildComponent (dynamicsDisplay);
     addAndMakeVisible (levelMetersPanel);
     addAndMakeVisible (latencyPanel);
 
@@ -292,7 +294,7 @@ void WTAnalyzerAudioProcessorEditor::updateSidecarButtonText()
     const auto& ctx = audioProcessor.sidecar.getContext();
     sidecarButton.setButtonText (ctx.valid
         ? juce::String ("Sidecar: ") + ctx.sourceFile.getFileNameWithoutExtension()
-        : juce::String ("Load Sidecar..."));
+        : juce::String ("Load Sidecar"));
 }
 
 void WTAnalyzerAudioProcessorEditor::openHelpDialog()
@@ -315,7 +317,6 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeName (int modeIndex)
     using Mode = WTAnalyzerAudioProcessor::AnalysisMode;
     switch ((Mode) modeIndex)
     {
-        case Mode::GenericOverlay:    return "Generic Overlay";
         case Mode::FrequencyResponse: return "Frequency Response";
         case Mode::THDMeasurement:    return "THD Measurement";
         case Mode::AliasingDetection: return "Aliasing Detection";
@@ -325,6 +326,7 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeName (int modeIndex)
         case Mode::StereoImage:       return "Stereo Image";
         case Mode::ParameterSweep:    return "Parameter Sweep";
         case Mode::PhaseResponse:     return "Phase Response";
+        case Mode::Dynamics:          return "Dynamics";
     }
     return "Analysis";
 }
@@ -334,47 +336,6 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
     using Mode = WTAnalyzerAudioProcessor::AnalysisMode;
     switch ((Mode) modeIndex)
     {
-        case Mode::GenericOverlay:
-            return
-                "Generic Overlay\n"
-                "================\n\n"
-                "What it shows\n"
-                "  Live FFT spectra of the pre-effect (amber) and post-effect (cyan)\n"
-                "  signals overlaid on a log-frequency / dB plot. No derived measurement -\n"
-                "  this is the universal A/B view you'll fall back to whenever you want to\n"
-                "  see what's actually flowing through the chain.\n\n"
-                "Input\n"
-                "  Anything. There's no expected test signal. Music, noise, a tone, a\n"
-                "  sweep - all valid.\n\n"
-                "How to read it\n"
-                "  Amber = pre = your input signal.\n"
-                "  Cyan  = post = output after the effect under test.\n"
-                "  Where the two overlap, the device is transparent. Where they differ,\n"
-                "  the device is changing the spectrum.\n\n"
-                "Mouse controls\n"
-                "  Drag in the dB-axis gutter (left side): zooms dB axis only.\n"
-                "  Drag in the freq-axis gutter (bottom): zooms frequency axis only.\n"
-                "  Drag in the plot area: zooms both axes around the click point.\n"
-                "  Double-click in a gutter: resets just that axis.\n"
-                "  Double-click in the plot: resets both axes.\n"
-                "  Move the mouse over the plot: the cursor readout (bottom-left) shows\n"
-                "  the frequency and dB level under the pointer.\n\n"
-                "2D Sweep Capture\n"
-                "  Not applicable in this mode - there's no derived measurement to\n"
-                "  bucket across a sweep axis. The Sweep Position APVTS parameter\n"
-                "  has no effect here, and the Capture / Clear header buttons are\n"
-                "  hidden. Switch to Frequency Response if you want to see how the\n"
-                "  device's spectrum changes across a sweep dimension.\n\n"
-                "Stereo (L / R / Diff)\n"
-                "  Per-channel spectra are live. Pre = warm red-orange (L,\n"
-                "  master) + amber (R); post = periwinkle violet (L, master) +\n"
-                "  cyan (R). Mono signals overlap pixel-for-pixel and read as\n"
-                "  pure master colour. The L / R / Diff toggle row at the\n"
-                "  right end of the cursor-readout strip controls visibility\n"
-                "  (L and R are independent on/off, at least one must stay on).\n"
-                "  Diff (spectrum_R(f) - spectrum_L(f)) is not yet computed\n"
-                "  for Generic Overlay; the toggle is a no-op here today.\n";
-
         case Mode::FrequencyResponse:
             return
                 "Frequency Response\n"
@@ -1017,6 +978,60 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
                 "  here is per-channel device behaviour, not a stereo\n"
                 "  difference. The inline readout shows per-channel RMS\n"
                 "  phase deviation.\n";
+
+        case Mode::Dynamics:
+            return
+                "Dynamics\n"
+                "========\n\n"
+                "What it measures\n"
+                "  The device's static transfer curve: input level (X) versus\n"
+                "  output level (Y), both in dB. Each processed block drops\n"
+                "  one point - its pre-effect RMS level paired with its\n"
+                "  post-effect RMS level - into the curve. This is the shape\n"
+                "  that reveals compression, expansion, gating and limiting.\n\n"
+                "Input\n"
+                "  A slow amplitude ramp through the device. Start near\n"
+                "  silence and rise smoothly to full level (or the reverse)\n"
+                "  over several seconds, so every input-level bin gets\n"
+                "  visited. A sine tone whose amplitude is automated works\n"
+                "  well; sustained tones give the cleanest RMS reading. Sweep\n"
+                "  slowly - the curve fills in as the ramp walks the input\n"
+                "  axis, and each bin averages every block that lands in it.\n\n"
+                "  Keep all device parameters fixed - only the input\n"
+                "  amplitude should change. Sweeping a device control (a\n"
+                "  saturator's drive, a compressor's threshold) at the same\n"
+                "  time overlays several different transfer curves onto one\n"
+                "  plot, and each parameter change shows up as a step or\n"
+                "  spike in the accumulated trace.\n\n"
+                "How to read it\n"
+                "  The faint diagonal is the unity line - output equals\n"
+                "  input. Where the curve sits ON the diagonal the device is\n"
+                "  pass-through at that level. Curve BELOW the diagonal at\n"
+                "  high input = downward compression or limiting (a knee\n"
+                "  then a shallow slope). Curve below the diagonal at LOW\n"
+                "  input = expansion or gating (output collapses as input\n"
+                "  drops below the threshold). A straight line parallel to\n"
+                "  the diagonal but offset is plain make-up or trim gain.\n\n"
+                "Controls\n"
+                "  Clear: wipes the accumulated curve. The curve builds up\n"
+                "         continuously while the mode is active - there is no\n"
+                "         arm step - so Clear before re-running a ramp if you\n"
+                "         want a fresh trace. (in the panel header)\n\n"
+                "2D Sweep Capture\n"
+                "  Not applicable in this mode. Dynamics already IS a sweep -\n"
+                "  the input-level axis is its swept dimension - so there is\n"
+                "  no second parameter to bucket against. The Sweep Position\n"
+                "  parameter has no effect here and the Capture / Clear sweep\n"
+                "  header buttons are hidden; the panel's own Clear button\n"
+                "  resets the curve.\n\n"
+                "Stereo (L / R)\n"
+                "  The shared L / R toggles pick which channels draw, the\n"
+                "  same as the other 1D-trace modes. L is mint, R is lime.\n"
+                "  Each channel bins its own pre/post level pair, so a\n"
+                "  device that compresses the two channels differently\n"
+                "  shows two distinct curves. There is no Diff toggle -\n"
+                "  the transfer curve is per-channel device behaviour, not\n"
+                "  a stereo difference.\n";
     }
     return "No help available for this mode.";
 }
@@ -1063,31 +1078,6 @@ WTAnalyzerAudioProcessorEditor::computeImbalanceContent() const
     auto db1   = [] (float v) -> juce::String { return juce::String (v, 1) + " dB"; };
     auto pct3  = [] (float v) -> juce::String { return juce::String (v, 3) + "%";  };
     auto val4  = [] (float v) -> juce::String { return juce::String (v, 4);        };
-
-    const float sr = audioProcessor.currentSampleRate.load (std::memory_order_relaxed);
-    const float binFreqScale = sr / (float) WTAnalyzerAudioProcessor::kSpectrumFftSize;
-    constexpr float kMinHz = 20.0f, kMaxHz = 20000.0f;
-    constexpr float kNoiseFloorDb = -80.0f;
-
-    // Mean dB across audible bins, ignoring near-noise-floor bins. A
-    // "channel centroid" — averaging in the dB domain is mathematically
-    // approximate but gives a stable comparable scalar that tracks
-    // gross channel asymmetry without bin-by-bin flicker.
-    auto spectrumMeanDb = [&] (const std::array<float, WTAnalyzerAudioProcessor::kSpectrumBins>& spec) -> float
-    {
-        float sum = 0.0f;
-        int   count = 0;
-        for (int bin = 1; bin < (int) spec.size(); ++bin)
-        {
-            const float hz = (float) bin * binFreqScale;
-            if (hz < kMinHz) continue;
-            if (hz > kMaxHz) break;
-            if (spec[bin] < kNoiseFloorDb) continue;
-            sum += spec[bin];
-            ++count;
-        }
-        return count > 0 ? sum / (float) count : kNoiseFloorDb;
-    };
 
     // Mean dB across valid bins of a sparse-with-sentinel array.
     auto sparseMeanDb = [&] (const float* arr, int count, float sentinelFloor) -> float
@@ -1136,28 +1126,14 @@ WTAnalyzerAudioProcessorEditor::computeImbalanceContent() const
         return count > 0 ? (float) std::sqrt (sumSq / (double) count) : 0.0f;
     };
 
-    // Channel colour pairs. Spectrum-level metrics (Generic Overlay)
-    // belong to the post-effect signal, so they use the post colours;
-    // every analysis-output metric uses the analysis colours.
-    const juce::Colour postL = WTColors::postEffect;
-    const juce::Colour postR = WTColors::postEffect_R;
-    const juce::Colour anL   = WTColors::analysis;
-    const juce::Colour anR   = WTColors::analysis_R;
+    // Every analysis-output metric uses the analysis colours.
+    const juce::Colour anL = WTColors::analysis;
+    const juce::Colour anR = WTColors::analysis_R;
 
     ImbalanceContent c;
 
     switch (mode)
     {
-        case (int) Mode::GenericOverlay:
-        {
-            const float l = spectrumMeanDb (audioProcessor.postSpectrumDb);
-            const float r = spectrumMeanDb (audioProcessor.postSpectrumDb_R);
-            c.metric  = "Avg output level";
-            c.lText   = "L " + db1 (l);   c.lColour = postL;
-            c.rText   = "R " + db1 (r);   c.rColour = postR;
-            break;
-        }
-
         case (int) Mode::FrequencyResponse:
         {
             const auto& fl = audioProcessor.frequencyResponse.getResponseDb();
@@ -1319,6 +1295,47 @@ WTAnalyzerAudioProcessorEditor::computeImbalanceContent() const
             }
             break;
         }
+
+        case (int) Mode::Dynamics:
+        {
+            // Peak gain change across the captured transfer curve: the
+            // bin whose output-minus-input deviation is largest in
+            // magnitude, sign preserved. Negative reads as the deepest
+            // compression / gating; positive as net make-up gain.
+            auto peakGainChange = [&] (bool rightChannel) -> float
+            {
+                const auto& dc = audioProcessor.dynamicsCurve;
+                float peak = 0.0f;
+                bool  any  = false;
+                for (int b = 0; b < dc.getNumBins(); ++b)
+                {
+                    const float out = rightChannel ? dc.getOutputDbR (b)
+                                                   : dc.getOutputDbL (b);
+                    if (out == DynamicsCurve::kNoData) continue;
+                    const float change = out - DynamicsCurve::binInputDb (b);
+                    if (! any || std::abs (change) > std::abs (peak))
+                        peak = change;
+                    any = true;
+                }
+                return any ? peak : DynamicsCurve::kNoData;
+            };
+
+            const float l = peakGainChange (false);
+            const float r = peakGainChange (true);
+            c.metric = "Peak gain change";
+            if (l == DynamicsCurve::kNoData && r == DynamicsCurve::kNoData)
+            {
+                c.lText = "no measurement";
+            }
+            else
+            {
+                if (l != DynamicsCurve::kNoData)
+                { c.lText = "L " + db1 (l);   c.lColour = anL; }
+                if (r != DynamicsCurve::kNoData)
+                { c.rText = "R " + db1 (r);   c.rColour = anR; }
+            }
+            break;
+        }
     }
 
     return c;
@@ -1329,8 +1346,7 @@ void WTAnalyzerAudioProcessorEditor::applyAnalysisMode (int modeIndex)
     lastAppliedAnalysisMode = modeIndex;
 
     using Mode = WTAnalyzerAudioProcessor::AnalysisMode;
-    const bool wantsSpectrumPath = (modeIndex == (int) Mode::GenericOverlay
-                                  || modeIndex == (int) Mode::FrequencyResponse
+    const bool wantsSpectrumPath = (modeIndex == (int) Mode::FrequencyResponse
                                   || modeIndex == (int) Mode::AliasingDetection);
     const bool wantsThdPath      = (modeIndex == (int) Mode::THDMeasurement);
     const bool wantsImdPath      = (modeIndex == (int) Mode::IMDMeasurement);
@@ -1339,6 +1355,7 @@ void WTAnalyzerAudioProcessorEditor::applyAnalysisMode (int modeIndex)
     const bool wantsStereoPath   = (modeIndex == (int) Mode::StereoImage);
     const bool wantsSweepPath    = (modeIndex == (int) Mode::ParameterSweep);
     const bool wantsPhasePath    = (modeIndex == (int) Mode::PhaseResponse);
+    const bool wantsDynamicsPath = (modeIndex == (int) Mode::Dynamics);
 
     spectrumDisplay  .setVisible (wantsSpectrumPath);
     cursorReadout    .setVisible (wantsSpectrumPath);
@@ -1349,6 +1366,7 @@ void WTAnalyzerAudioProcessorEditor::applyAnalysisMode (int modeIndex)
     stereoDisplay    .setVisible (wantsStereoPath);
     sweepCurveDisplay.setVisible (wantsSweepPath);
     phaseDisplay     .setVisible (wantsPhasePath);
+    dynamicsDisplay  .setVisible (wantsDynamicsPath);
 
     // The alias-view toggle row lives inside SpectrumDisplay (it's tied to
     // a specific mode within the shared spectrum panel) but its visibility
@@ -1371,18 +1389,19 @@ void WTAnalyzerAudioProcessorEditor::applyAnalysisMode (int modeIndex)
     // data. The Diff toggle is restricted to the bar / waveform modes
     // (THD, IMD, IR, Farina) where per-harmonic / per-product / per-sample
     // R-L difference is genuinely mode-specific. The 1D-trace modes
-    // (Generic Overlay, FR, Aliasing, Phase Response) have L / R only -
+    // (FR, Aliasing, Phase Response, Dynamics) have L / R only -
     // dedicated stereo-difference analysis lives in the Stereo Image mode.
     const bool wantsStereoToggles = wantsSpectrumPath || wantsThdPath
                                   || wantsImdPath || wantsIrPath || wantsFarinaPath
-                                  || wantsPhasePath;
+                                  || wantsPhasePath || wantsDynamicsPath;
     const bool wantsDiffToggle    = wantsThdPath || wantsImdPath
                                   || wantsIrPath || wantsFarinaPath;
 
     // Entering an L/R-only mode while Diff was left engaged from a bar /
     // waveform mode would leave L and R both off (Diff is exclusive),
     // blanking the display. Restore the L+R view first.
-    if ((wantsSpectrumPath || wantsPhasePath) && stereoDiffButton.getToggleState())
+    if ((wantsSpectrumPath || wantsPhasePath || wantsDynamicsPath)
+        && stereoDiffButton.getToggleState())
         stereoDiffButton.setToggleState (false, juce::sendNotification);
 
     stereoLButton    .setVisible (wantsStereoToggles);
@@ -1424,6 +1443,7 @@ void WTAnalyzerAudioProcessorEditor::resized()
     stereoDisplay   .setUiScale (s);
     sweepCurveDisplay.setUiScale (s);
     phaseDisplay    .setUiScale (s);
+    dynamicsDisplay .setUiScale (s);
     sidechainNotice .setUiScale (s);
     levelMetersPanel.setUiScale (s);
     latencyPanel    .setUiScale (s);
@@ -1498,6 +1518,7 @@ void WTAnalyzerAudioProcessorEditor::resized()
     stereoDisplay    .setBounds (bounds);
     sweepCurveDisplay.setBounds (bounds);
     phaseDisplay     .setBounds (bounds);
+    dynamicsDisplay  .setBounds (bounds);
 
     // The sidechain notice covers the whole display rect.
     sidechainNotice.setBounds (bounds);

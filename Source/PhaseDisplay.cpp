@@ -22,6 +22,16 @@ namespace
     // (-1e9) sits well below it.
     constexpr float kValidFloor = -1.0e8f;
 
+    // Height of the cursor readout strip below the plot.
+    constexpr int kReadoutH = 18;
+
+    juce::String formatHz (float hz)
+    {
+        if (hz >= 1000.0f)
+            return juce::String (hz / 1000.0f, hz >= 10000.0f ? 1 : 2) + " kHz";
+        return juce::String (juce::roundToInt (hz)) + " Hz";
+    }
+
     // Rounds a positive value up to the next "nice" axis maximum from the
     // 1 / 2 / 5 sequence.
     float niceCeil (float v)
@@ -82,6 +92,19 @@ void PhaseDisplay::timerCallback()
     repaint();
 }
 
+void PhaseDisplay::mouseMove (const juce::MouseEvent& e)
+{
+    cursorPos    = e.getPosition();
+    cursorInside = true;
+    repaint();
+}
+
+void PhaseDisplay::mouseExit (const juce::MouseEvent&)
+{
+    cursorInside = false;
+    repaint();
+}
+
 void PhaseDisplay::parameterChanged (const juce::String& parameterID, float /*newValue*/)
 {
     if (parameterID == "phaseView")
@@ -131,7 +154,16 @@ void PhaseDisplay::paint (juce::Graphics& g)
     g.fillRect (bounds);
 
     bounds.removeFromTop (sx (36));   // header band - owned by the view buttons
+    auto readoutRow = bounds.removeFromBottom (sx (kReadoutH));
+
+    hoverText.clear();
     drawCurve (g, bounds.reduced (sx (8), sx (8)));
+
+    // Cursor readout strip below the plot.
+    g.setColour (juce::Colours::grey);
+    g.setFont (juce::FontOptions (sf (11.0f)));
+    g.drawText (hoverText, readoutRow.withTrimmedLeft (sx (8)),
+                juce::Justification::centredLeft, false);
 }
 
 void PhaseDisplay::drawCurve (juce::Graphics& g, juce::Rectangle<int> area)
@@ -221,14 +253,12 @@ void PhaseDisplay::drawCurve (juce::Graphics& g, juce::Rectangle<int> area)
         const float v = yMin + yRange * (float) i / 4.0f;
         const int   y = juce::roundToInt (valToY (v));
         juce::Rectangle<int> r (labelGutterLeft.getX(), y - sx (6),
-                                labelGutterLeft.getWidth() - sx (4), sx (12));
-        g.drawText (formatY (v), r, juce::Justification::centredRight, false);
+                                labelGutterLeft.getWidth() - sx (11), sx (12));
+        // The topmost tick slot carries the unit caption instead of the
+        // number, so the caption never overlaps the top value.
+        g.drawText (i == 4 ? juce::String (gd ? "ms" : "deg") : formatY (v),
+                    r, juce::Justification::centredRight, false);
     }
-
-    g.drawText (gd ? "ms" : "deg",
-                juce::Rectangle<int> (labelGutterLeft.getX(), plotArea.getY() - sx (2),
-                                      labelGutterLeft.getWidth() - sx (4), sx (12)),
-                juce::Justification::centredRight, false);
 
     struct FreqLabel { float hz; const char* text; };
     const std::array<FreqLabel, 10> kFreqLabels {{
@@ -286,4 +316,16 @@ void PhaseDisplay::drawCurve (juce::Graphics& g, juce::Rectangle<int> area)
 
     if (showR) strokeChannel (dataR, WTColors::analysis_R);   // R drawn first
     if (showL) strokeChannel (dataL, WTColors::analysis);     // L on top
+
+    // ---- Cursor readout ------------------------------------------------
+    if (cursorInside && plotArea.contains (cursorPos))
+    {
+        const float tx = (float) (cursorPos.x - plotArea.getX())
+                            / (float) plotArea.getWidth();
+        const float ty = (float) (cursorPos.y - plotArea.getY())
+                            / (float) plotArea.getHeight();
+        const float hz = std::pow (10.0f, logMin + juce::jlimit (0.0f, 1.0f, tx) * logRange);
+        const float v  = yMin + (1.0f - juce::jlimit (0.0f, 1.0f, ty)) * yRange;
+        hoverText = formatHz (hz) + "    " + formatY (v) + (gd ? " ms" : " deg");
+    }
 }
