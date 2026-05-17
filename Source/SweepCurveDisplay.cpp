@@ -9,6 +9,7 @@
 #include "SweepCurveDisplay.h"
 #include "Colors.h"
 #include "Analyses/SweepCurve.h"
+#include "Analyses/SweepGrid.h"
 
 #include <algorithm>
 #include <cmath>
@@ -31,9 +32,6 @@ namespace
         return niceFrac * base;
     }
 
-    // Decimal places needed for a Y axis whose tick step is `step`, so
-    // sub-unit ranges (THD often sits well below 0.01%) still render
-    // distinct labels instead of a column of "0.00".
     int tickDecimals (float step)
     {
         if (step <= 0.0f) return 2;
@@ -46,6 +44,20 @@ namespace
         if (v <= 0.0f) return "0";
         return juce::String (v, decimals);
     }
+
+    // Heatmap decay-level ramp: near-black -> analysis green -> near-white.
+    juce::Colour heatColour (float t)
+    {
+        t = juce::jlimit (0.0f, 1.0f, t);
+        const juce::Colour lo  (0xff0c0c12);
+        const juce::Colour mid = WTColors::analysis;
+        const juce::Colour hi  (0xfff2f2f0);
+        return t < 0.5f ? lo .interpolatedWith (mid, t * 2.0f)
+                        : mid.interpolatedWith (hi, (t - 0.5f) * 2.0f);
+    }
+
+    // Differential-dB span shown below the heatmap's brightest cell.
+    constexpr float kHeatSpanDb = 80.0f;
 }
 
 SweepCurveDisplay::SweepCurveDisplay (WTAnalyzerAudioProcessor& proc)
@@ -53,23 +65,27 @@ SweepCurveDisplay::SweepCurveDisplay (WTAnalyzerAudioProcessor& proc)
 {
     setOpaque (true);
 
-    auto configureButton = [this] (juce::TextButton& b, int paramIndex)
+    auto configureButton = [this] (juce::TextButton& b, const juce::String& paramID,
+                                   int radioGroup, int paramIndex)
     {
         addAndMakeVisible (b);
         b.setClickingTogglesState (true);
-        b.setRadioGroupId (6, juce::dontSendNotification);
-        b.onClick = [this, paramIndex]
+        b.setRadioGroupId (radioGroup, juce::dontSendNotification);
+        b.onClick = [this, paramID, paramIndex]
         {
-            if (auto* p = processor.apvts.getParameter ("sweepMetric"))
+            if (auto* p = processor.apvts.getParameter (paramID))
                 p->setValueNotifyingHost (p->convertTo0to1 ((float) paramIndex));
         };
     };
 
-    configureButton (thdButton, 0);
-    configureButton (imdButton, 1);
+    configureButton (thdButton,     "sweepMetric", 6, 0);
+    configureButton (imdButton,     "sweepMetric", 6, 1);
+    configureButton (lineButton,    "sweepView",   9, 0);
+    configureButton (heatmapButton, "sweepView",   9, 1);
 
     processor.apvts.addParameterListener ("sweepMetric", this);
-    syncMetricButtons();
+    processor.apvts.addParameterListener ("sweepView",   this);
+    syncButtons();
 
     startTimerHz (30);
 }
@@ -78,6 +94,7 @@ SweepCurveDisplay::~SweepCurveDisplay()
 {
     stopTimer();
     processor.apvts.removeParameterListener ("sweepMetric", this);
+    processor.apvts.removeParameterListener ("sweepView",   this);
 }
 
 void SweepCurveDisplay::setUiScale (float newScale) noexcept
@@ -93,27 +110,37 @@ void SweepCurveDisplay::timerCallback()
 
 void SweepCurveDisplay::parameterChanged (const juce::String& parameterID, float /*newValue*/)
 {
-    if (parameterID == "sweepMetric")
+    if (parameterID == "sweepMetric" || parameterID == "sweepView")
     {
         juce::MessageManager::callAsync ([this]
         {
-            syncMetricButtons();
+            syncButtons();
             repaint();
         });
     }
 }
 
-void SweepCurveDisplay::syncMetricButtons()
+void SweepCurveDisplay::syncButtons()
 {
-    const int idx = (int) *processor.apvts.getRawParameterValue ("sweepMetric");
-    thdButton.setToggleState (idx == 0, juce::dontSendNotification);
-    imdButton.setToggleState (idx == 1, juce::dontSendNotification);
+    const int metric = (int) *processor.apvts.getRawParameterValue ("sweepMetric");
+    thdButton.setToggleState (metric == 0, juce::dontSendNotification);
+    imdButton.setToggleState (metric == 1, juce::dontSendNotification);
+
+    const int view = (int) *processor.apvts.getRawParameterValue ("sweepView");
+    lineButton   .setToggleState (view == 0, juce::dontSendNotification);
+    heatmapButton.setToggleState (view == 1, juce::dontSendNotification);
 }
 
 SweepCurveDisplay::Metric SweepCurveDisplay::currentMetric() const noexcept
 {
     return ((int) *processor.apvts.getRawParameterValue ("sweepMetric") == 1)
                ? Metric::IMD : Metric::THD;
+}
+
+SweepCurveDisplay::View SweepCurveDisplay::currentView() const noexcept
+{
+    return ((int) *processor.apvts.getRawParameterValue ("sweepView") == 1)
+               ? View::Heatmap : View::Line;
 }
 
 void SweepCurveDisplay::liveValues (float& outL, float& outR) const
@@ -144,15 +171,18 @@ void SweepCurveDisplay::resized()
     auto bounds = getLocalBounds();
     auto header = bounds.removeFromTop (sx (36));
 
-    const int buttonW = sx (74);
-    const int buttonH = sx (22);
-    const int spacing = sx (6);
-    const int totalW  = buttonW * 2 + spacing;
-    const int startX  = header.getCentreX() - totalW / 2;
-    const int buttonY = header.getCentreY() - buttonH / 2;
+    const int buttonW  = sx (58);
+    const int buttonH  = sx (22);
+    const int gap      = sx (4);
+    const int groupGap = sx (14);
+    const int totalW   = buttonW * 4 + gap * 2 + groupGap;
+    int       x        = header.getCentreX() - totalW / 2;
+    const int y        = header.getCentreY() - buttonH / 2;
 
-    thdButton.setBounds (startX,                       buttonY, buttonW, buttonH);
-    imdButton.setBounds (startX + buttonW + spacing,   buttonY, buttonW, buttonH);
+    thdButton    .setBounds (x, y, buttonW, buttonH); x += buttonW + gap;
+    imdButton    .setBounds (x, y, buttonW, buttonH); x += buttonW + groupGap;
+    lineButton   .setBounds (x, y, buttonW, buttonH); x += buttonW + gap;
+    heatmapButton.setBounds (x, y, buttonW, buttonH);
 }
 
 void SweepCurveDisplay::paint (juce::Graphics& g)
@@ -162,9 +192,15 @@ void SweepCurveDisplay::paint (juce::Graphics& g)
     g.setColour (juce::Colour (0xff111213));
     g.fillRect (bounds);
 
-    bounds.removeFromTop (sx (36));   // header band - owned by the metric buttons
+    bounds.removeFromTop (sx (36));   // header band - owned by the buttons
     auto area = bounds.reduced (sx (8), sx (8));
 
+    if (currentView() == View::Heatmap) drawHeatmap (g, area);
+    else                                drawLine    (g, area);
+}
+
+void SweepCurveDisplay::drawLine (juce::Graphics& g, juce::Rectangle<int> area)
+{
     auto plotArea = area;
     auto labelGutterLeft   = plotArea.removeFromLeft   (sx (44));
     auto labelGutterBottom = plotArea.removeFromBottom (sx (18));
@@ -176,7 +212,6 @@ void SweepCurveDisplay::paint (juce::Graphics& g)
     const float lastBucket = (float) juce::jmax (1, numBuckets - 1);
 
     // ---- Y auto-range --------------------------------------------------
-    // Scan every captured value plus the live readings for the maximum.
     float dataMax = 0.0f;
     for (int b = 0; b < numBuckets; ++b)
     {
@@ -186,10 +221,12 @@ void SweepCurveDisplay::paint (juce::Graphics& g)
         if (r != SweepCurve::kNoData) dataMax = juce::jmax (dataMax, r);
     }
 
+    // The live reading is NOT folded into the auto-range. A transient
+    // spike - e.g. THD blowing up as the signal decays when transport
+    // stops - must not rescale (and visually bounce) the captured curve.
+    // An off-scale live dot simply clamps to the plot edge.
     float liveL = SweepCurve::kNoData, liveR = SweepCurve::kNoData;
     liveValues (liveL, liveR);
-    if (liveL != SweepCurve::kNoData) dataMax = juce::jmax (dataMax, liveL);
-    if (liveR != SweepCurve::kNoData) dataMax = juce::jmax (dataMax, liveR);
 
     const float yMax = niceCeil (dataMax);
 
@@ -234,7 +271,6 @@ void SweepCurveDisplay::paint (juce::Graphics& g)
                     juce::Justification::centredTop, false);
     }
 
-    // "%" unit marker at the top of the Y gutter.
     g.drawText ("%", juce::Rectangle<int> (labelGutterLeft.getX(), plotArea.getY() - sx (2),
                                            labelGutterLeft.getWidth() - sx (4), sx (12)),
                 juce::Justification::centredRight, false);
@@ -281,4 +317,93 @@ void SweepCurveDisplay::paint (juce::Graphics& g)
 
     liveDot (liveR, WTColors::analysis_R);
     liveDot (liveL, WTColors::analysis);
+}
+
+void SweepCurveDisplay::drawHeatmap (juce::Graphics& g, juce::Rectangle<int> area)
+{
+    auto plotArea = area;
+    auto labelGutterLeft   = plotArea.removeFromLeft   (sx (44));   // sweep position
+    auto labelGutterBottom = plotArea.removeFromBottom (sx (18));   // harmonic / product
+    if (plotArea.getWidth() <= 0 || plotArea.getHeight() <= 0) return;
+
+    g.setColour (juce::Colour (0xff181a1d));
+    g.fillRect (plotArea);
+
+    const bool isThd   = (currentMetric() == Metric::THD);
+    const int  numCols = isThd ? 15 : processor.imdMeasurement.getNumProducts();
+    const int  numBkts = processor.sweepGrid.getNumBuckets();
+    if (numCols <= 0) return;
+
+    // Empty-state hint.
+    if (! processor.sweepGrid.hasAnyData())
+    {
+        g.setColour (juce::Colours::grey);
+        g.setFont (juce::FontOptions (sf (12.0f)));
+        g.drawText ("Arm Capture and run the sweep automation",
+                    plotArea, juce::Justification::centred, false);
+        return;
+    }
+
+    // ---- Auto-range: brightest captured cell is the top of the ramp ----
+    float dMax = -1.0e8f;
+    for (int b = 0; b < numBkts; ++b)
+        for (int c = 0; c < numCols; ++c)
+        {
+            const float v = processor.sweepGrid.getValueL (b, c);
+            if (v > -1.0e8f) dMax = juce::jmax (dMax, v);
+        }
+    if (dMax < -1.0e7f) dMax = 0.0f;
+    const float floorDb = dMax - kHeatSpanDb;
+
+    // ---- Cells ---------------------------------------------------------
+    const float pW = (float) plotArea.getWidth();
+    const float pH = (float) plotArea.getHeight();
+    for (int c = 0; c < numCols; ++c)
+    {
+        const float cx0 = (float) plotArea.getX() + (float) c       / (float) numCols * pW;
+        const float cx1 = (float) plotArea.getX() + (float) (c + 1) / (float) numCols * pW;
+        for (int b = 0; b < numBkts; ++b)
+        {
+            const float v = processor.sweepGrid.getValueL (b, c);
+            const float t = (v > -1.0e8f) ? (v - floorDb) / kHeatSpanDb : 0.0f;
+            // Bucket 0 at the bottom, bucket N-1 at the top.
+            const float cy1 = (float) plotArea.getBottom() - (float) b       / (float) numBkts * pH;
+            const float cy0 = (float) plotArea.getBottom() - (float) (b + 1) / (float) numBkts * pH;
+            g.setColour (heatColour (t));
+            g.fillRect (juce::Rectangle<float> (cx0, cy0, cx1 - cx0, cy1 - cy0));
+        }
+    }
+
+    // ---- Current sweep position marker ---------------------------------
+    const float pos  = juce::jlimit (0.0f, 1.0f,
+        (float) *processor.apvts.getRawParameterValue ("sweepPosition"));
+    const float posY = (float) plotArea.getBottom() - pos * pH;
+    g.setColour (juce::Colours::whitesmoke.withAlpha (0.35f));
+    g.drawLine ((float) plotArea.getX(), posY, (float) plotArea.getRight(), posY, sf (1.0f));
+
+    // ---- Axis labels ---------------------------------------------------
+    g.setColour (juce::Colours::grey);
+    g.setFont (juce::FontOptions (sf (10.0f)));
+
+    for (int i = 0; i <= 4; ++i)   // sweep position down the left gutter
+    {
+        const float frac = (float) i / 4.0f;
+        const int   y    = (int) ((float) plotArea.getBottom() - frac * pH);
+        g.drawText (juce::String (frac, 2),
+                    juce::Rectangle<int> (labelGutterLeft.getX(), y - sx (6),
+                                          labelGutterLeft.getWidth() - sx (4), sx (12)),
+                    juce::Justification::centredRight, false);
+    }
+
+    for (int c = 0; c < numCols; ++c)   // harmonic / product along the bottom
+    {
+        const int   cxc = (int) ((float) plotArea.getX()
+                                 + ((float) c + 0.5f) / (float) numCols * pW);
+        const juce::String txt = isThd ? juce::String (c + 2)
+                                       : juce::String (processor.imdMeasurement.getProductLabel (c));
+        g.drawText (txt,
+                    juce::Rectangle<int> (cxc - sx (22), labelGutterBottom.getY(),
+                                          sx (44), labelGutterBottom.getHeight()),
+                    juce::Justification::centredTop, false);
+    }
 }

@@ -392,11 +392,15 @@ void CSDView::renderWaterfall (int channel)
 
     juce::Graphics g (cachedImage);
 
-    const float maxHz    = juce::jmax (kViewMinHz * 2.0f, csd.getMaxHz());
-    const float logMin   = std::log10 (kViewMinHz);
+    // The freq axis spans the ACTUAL bin range (bin 1 up), not a nominal
+    // 20 Hz - otherwise the cube and axes anchor to an empty sub-bin-1
+    // strip and float off the left edge of the real data.
+    const float binHz1   = csd.getSampleRate() / (float) CSD::kSliceFftSize;
+    const float loHz     = juce::jmax (kViewMinHz, binHz1);
+    const float maxHz    = juce::jmax (loHz * 2.0f, csd.getMaxHz());
+    const float logMin   = std::log10 (loHz);
     const float logMax   = std::log10 (maxHz);
     const float logRange = logMax - logMin;
-    const float binHz1   = csd.getSampleRate() / (float) CSD::kSliceFftSize;
     const int   nSlices  = csd.getNumSlices();
 
     auto freqToMx = [&] (float hz)
@@ -448,8 +452,8 @@ void CSDView::renderWaterfall (int channel)
         for (int bin = 1; bin < CSD::kNumBins; ++bin)
         {
             const float hz = (float) bin * binHz1;
-            if (hz < kViewMinHz) continue;
-            if (hz > maxHz)      break;
+            if (hz < loHz)  continue;
+            if (hz > maxHz) break;
 
             const float mx = freqToMx (hz);
             const float lv = juce::jlimit (0.0f, 1.0f,
@@ -498,17 +502,17 @@ void CSDView::renderWaterfall (int channel)
         g.drawLine (e0.x, e0.y, e1.x, e1.y, sf (1.2f));
 
         std::vector<float> freqTicks;
-        buildFreqTicks (kViewMinHz, maxHz, freqTicks);
+        buildFreqTicks (loHz, maxHz, freqTicks);
         g.setColour (juce::Colours::grey);
         for (float f : freqTicks)
         {
             const float mx  = freqToMx (f);
             const P on  = project (mx, -0.5f, 0.5f);
-            const P end = project (mx, -0.5f, 0.62f);
+            const P end = project (mx, -0.5f, 0.55f);
             g.drawLine (on.x, on.y, end.x, end.y, sf (1.0f));
-            label3D (formatHz (f), project (mx, -0.5f, 0.80f), 0.0f, 0.0f);
+            label3D (formatHz (f), project (mx, -0.5f, 0.63f), 0.0f, 0.0f);
         }
-        label3D ("Hz", project (0.62f, -0.5f, 0.5f), 0.0f, 0.0f);
+        label3D ("Hz", project (0.57f, -0.5f, 0.5f), 0.0f, 0.0f);
     }
 
     // Time axis: bottom edge at my = mx = -0.5, running along mz.
@@ -524,12 +528,12 @@ void CSDView::renderWaterfall (int channel)
             const float tf = (float) i / 4.0f;
             const float mz = 0.5f - tf;   // t = 0 at the front (+mz) edge
             const P on  = project (-0.5f,  -0.5f, mz);
-            const P end = project (-0.62f, -0.5f, mz);
+            const P end = project (-0.55f, -0.5f, mz);
             g.drawLine (on.x, on.y, end.x, end.y, sf (1.0f));
             label3D (formatMs (tf * csd.getSpanMs()),
-                     project (-0.84f, -0.5f, mz), 0.0f, 0.0f);
+                     project (-0.66f, -0.5f, mz), 0.0f, 0.0f);
         }
-        label3D ("s", project (-0.5f, -0.5f, 0.62f), 0.0f, 0.0f);
+        label3D ("s", project (-0.5f, -0.5f, 0.57f), 0.0f, 0.0f);
     }
 }
 

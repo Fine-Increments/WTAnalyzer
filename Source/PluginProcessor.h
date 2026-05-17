@@ -18,6 +18,7 @@
 #include "Analyses/FarinaIR.h"
 #include "Analyses/SweepCapture.h"
 #include "Analyses/SweepCurve.h"
+#include "Analyses/SweepGrid.h"
 #include "Analyses/StereoAnalysis.h"
 #include "Analyses/PhaseResponse.h"
 
@@ -242,6 +243,11 @@ public:
     // is recorded per L/R channel bucketed by `sweepPosition`, producing
     // a Plugin Doctor style X-Y curve.
     SweepCurve sweepCurve;
+
+    // Parameter Sweep heatmap data: alongside the scalar curve, the
+    // metric's full per-frame row (THD per-harmonic / IMD per-product
+    // differential dB) is recorded per bucket for the heatmap view.
+    SweepGrid sweepGrid;
 
     // Sidecar JSON reader: parameter-source for analyses that need to
     // know exactly what test signal the script generated (PLANNING.md

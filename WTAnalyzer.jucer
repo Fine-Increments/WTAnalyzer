@@ -106,6 +106,10 @@
               file="Source/Analyses/SweepCurve.cpp"/>
         <FILE id="SwCv04" name="SweepCurve.h" compile="0" resource="0"
               file="Source/Analyses/SweepCurve.h"/>
+        <FILE id="SwGr01" name="SweepGrid.cpp" compile="1" resource="0"
+              file="Source/Analyses/SweepGrid.cpp"/>
+        <FILE id="SwGr02" name="SweepGrid.h" compile="0" resource="0"
+              file="Source/Analyses/SweepGrid.h"/>
         <FILE id="PhRs01" name="PhaseResponse.cpp" compile="1" resource="0"
               file="Source/Analyses/PhaseResponse.cpp"/>
         <FILE id="PhRs02" name="PhaseResponse.h" compile="0" resource="0"

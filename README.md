@@ -76,15 +76,17 @@ Pre-alpha. Working analysis modes:
   input and output clouds, so the device's effect is the visible
   delta) or Difference (post minus aligned pre - the stereo image
   the device added).
-- **Parameter Sweep** - a Plugin Doctor style 1D X-Y curve: a
-  headline metric (THD% or IMD%, picked in the panel header) plotted
-  against a swept parameter. The user automates WTAnalyzer's Sweep
-  Position parameter from the DAW and routes the same automation to
-  whatever they want to characterise (the source plugin's WT Pos, an
-  effect's drive or cutoff); while Capture is armed the metric is
-  recorded per L/R channel bucketed by sweep position. The captured
-  curves draw alongside a live dot at the current position; the Y
-  axis auto-ranges in percent.
+- **Parameter Sweep** - Plugin Doctor style parameter testing: a
+  headline metric (THD% or IMD%) plotted against a swept parameter,
+  with a Line / Heatmap view selector. The user automates WTAnalyzer's
+  Sweep Position parameter from the DAW and routes the same automation
+  to whatever they want to characterise (the source plugin's WT Pos,
+  an effect's drive or cutoff); while Capture is armed the metric is
+  recorded per sweep-position bucket. **Line** draws the metric scalar
+  as a 1D X-Y curve per L/R channel with a live position dot; **Heatmap**
+  draws the metric's full distribution - column per harmonic (THD) or
+  product (IMD), row per sweep position, colour the level. One capture
+  feeds both views.
 - **Phase Response** - the phase side of the transfer function,
   companion to Frequency Response's magnitude. A Phase / Group Delay
   view selector picks the sub-view. **Phase** plots the per-frequency
@@ -160,12 +162,12 @@ Stereo support (shipped):
 
 Not yet built:
 
-- **2D sweep capture for other modes** - currently only Frequency
-  Response writes into the SweepCapture buffer; THD / Aliasing /
-  IMD / Direct Impulse IR / Farina IR rollouts pending. Each
-  mode's heatmap uses its own X-axis category (harmonic, product,
-  time, freq) with a mode-specific colormap (bipolar for
-  FR/IR, monotonic for THD/IMD/Aliasing).
+- **2D sweep capture for other modes** - the Parameter Sweep mode
+  now carries the THD and IMD parameter heatmaps (harmonic / product
+  distribution vs sweep position), alongside Frequency Response's
+  own freq-vs-position heatmap. Aliasing peak-holds across a sweep
+  by its own design; the IR modes are one-shot, so neither buckets
+  cleanly per sweep position - no further heatmap rollout planned.
 - **Precision chart types**:
   - *Parameter-sweep curves* - shipped as the Parameter Sweep mode
     (THD% / IMD% metrics); FR-at-frequency and SNR/SINAD metrics
@@ -174,8 +176,10 @@ Not yet built:
 - Multisine flatness, step response, transfer function from noise.
 - **Sidecar-driven parameter pre-fill** - the SidecarReader
   infrastructure exists but no analysis consumes its parameters
-  yet. Rolling out to all consuming modes (Farina, IMD, THD) in
-  one consistent sweep when those modes are feature-complete.
+  yet. Deferred to WTGenerator: the current WTSynth-style scripts
+  emit harmonic-index parameters, not the absolute Hz / durations
+  Farina / THD / IMD need, so pre-fill is built once WTGenerator's
+  render-mode scripts emit a real-units sidecar.
 - **WTGenerator companion plugin** (see WTGENERATOR.md design doc)
   - purpose-built test-signal generator that resolves WTSynth's
   structural limitations for IR / Farina / arbitrary-Hz two-tone

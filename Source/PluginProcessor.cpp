@@ -184,6 +184,15 @@ WTAnalyzerAudioProcessor::createParameterLayout()
         juce::StringArray { "THD%", "IMD%" },
         0));
 
+    // Parameter Sweep view: the 1D scalar line plot, or a heatmap of the
+    // metric's full per-harmonic / per-product distribution across the
+    // sweep. Index order matches SweepCurveDisplay's view selector.
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { "sweepView", 1 },
+        "Sweep View",
+        juce::StringArray { "Line", "Heatmap" },
+        0));
+
     // Phase Response mode sub-view selector: the detrended phase curve
     // (degrees) or group delay (ms). Index order matches PhaseDisplay's
     // view selector.
@@ -340,6 +349,7 @@ void WTAnalyzerAudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
 
     sweepCapture.prepare (kSpectrumBins);
     sweepCurve  .reset();
+    sweepGrid   .reset();
 
     lastActiveAnalysisIndex = (int) *apvts.getRawParameterValue ("activeAnalysis");
     lastSweepMetric          = (int) *apvts.getRawParameterValue ("sweepMetric");
@@ -471,11 +481,18 @@ void WTAnalyzerAudioProcessor::runSpectrumFft()
         if (metric != lastSweepMetric)
         {
             sweepCurve.reset();
+            sweepGrid .reset();
             lastSweepMetric = metric;
         }
 
         float vL = SweepCurve::kNoData;
         float vR = SweepCurve::kNoData;
+
+        // Heatmap row: the metric's full per-harmonic / per-product
+        // differential dB distribution for this frame, per channel.
+        float rowL[SweepGrid::kMaxCols];
+        float rowR[SweepGrid::kMaxCols];
+        int   numCols = 0;
 
         if (metric == 0)   // THD%
         {
@@ -485,6 +502,17 @@ void WTAnalyzerAudioProcessor::runSpectrumFft()
                 vL = thdMeasurement.getTotalThdPercent (THDMeasurement::Channel::L);
             if (thdMeasurement.isValid (THDMeasurement::Channel::R))
                 vR = thdMeasurement.getTotalThdPercent (THDMeasurement::Channel::R);
+
+            // Harmonics 2..16 - the distortion harmonics (1 is the
+            // fundamental). 15 columns.
+            numCols = 15;
+            for (int c = 0; c < numCols; ++c)
+            {
+                rowL[c] = thdMeasurement.getHarmonicRatioDb (THDMeasurement::Source::Diff,
+                                                             c + 2, THDMeasurement::Channel::L);
+                rowR[c] = thdMeasurement.getHarmonicRatioDb (THDMeasurement::Source::Diff,
+                                                             c + 2, THDMeasurement::Channel::R);
+            }
         }
         else               // IMD%
         {
@@ -494,6 +522,15 @@ void WTAnalyzerAudioProcessor::runSpectrumFft()
                 vL = imdMeasurement.getTotalImdPercent (IMDMeasurement::Channel::L);
             if (imdMeasurement.isValid (IMDMeasurement::Channel::R))
                 vR = imdMeasurement.getTotalImdPercent (IMDMeasurement::Channel::R);
+
+            numCols = imdMeasurement.getNumProducts();
+            for (int c = 0; c < numCols && c < SweepGrid::kMaxCols; ++c)
+            {
+                rowL[c] = imdMeasurement.getProductRatioDb (IMDMeasurement::Source::Diff,
+                                                            c, IMDMeasurement::Channel::L);
+                rowR[c] = imdMeasurement.getProductRatioDb (IMDMeasurement::Source::Diff,
+                                                            c, IMDMeasurement::Channel::R);
+            }
         }
 
         const bool  armed    = *apvts.getRawParameterValue ("sweepCaptureActive") > 0.5f;
@@ -537,6 +574,7 @@ void WTAnalyzerAudioProcessor::runSpectrumFft()
                  && (vL != SweepCurve::kNoData || vR != SweepCurve::kNoData))
         {
             sweepCurve.captureFrame (position, vL, vR);
+            sweepGrid .captureFrame (position, rowL, rowR, numCols);
         }
     }
     else if (activeIndex == (int) AnalysisMode::PhaseResponse)

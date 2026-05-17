@@ -5,15 +5,19 @@
     Mode-specific display for the Parameter Sweep analysis - a Plugin
     Doctor style 1D X-Y plot.
 
-    X is the swept parameter (the `sweepPosition` APVTS lane, 0..1, that
-    the user automates from the DAW alongside whatever they sweep in the
-    source plugin). Y is a headline measurement metric. A metric selector
-    in the header picks which: THD% or IMD%.
+    Two header selectors: a metric (THD% / IMD%) and a view (Line /
+    Heatmap).
+
+      - Line: a 1D X-Y plot. X is the swept parameter (the `sweepPosition`
+        APVTS lane, 0..1), Y is the headline metric scalar, drawn per
+        L/R channel with a live dot at the current position.
+      - Heatmap: the metric's full per-harmonic / per-product
+        differential-dB distribution. X is the harmonic / product, Y is
+        the sweep position, colour is level - the 2D parameter-sweep view.
 
     While sweep capture is armed (the shared header Capture button) the
-    processor records the metric per L/R channel into SweepCurve; this
-    component plots the captured curve plus a live dot at the current
-    sweep position so the user can see where they are mid-sweep.
+    processor records both the scalar (SweepCurve) and the full row
+    (SweepGrid) per bucket, so switching view needs no re-capture.
 
     The shared editor-level SidechainNotice covers this panel when the
     sidechain isn't connected, so the display assumes pre is wired.
@@ -47,18 +51,25 @@ private:
     float sf (float v) const noexcept { return v * uiScale; }
 
     enum class Metric { THD, IMD };
+    enum class View   { Line, Heatmap };
     Metric currentMetric() const noexcept;
-    void   syncMetricButtons();
+    View   currentView()   const noexcept;
+    void   syncButtons();
 
     // Reads the live per-channel metric value from the active sub-analysis.
     // Returns SweepCurve::kNoData for a channel with no valid measurement.
     void liveValues (float& outL, float& outR) const;
 
+    void drawLine    (juce::Graphics& g, juce::Rectangle<int> area);
+    void drawHeatmap (juce::Graphics& g, juce::Rectangle<int> area);
+
     WTAnalyzerAudioProcessor& processor;
     float uiScale = 1.0f;
 
-    juce::TextButton thdButton { "THD%" };
-    juce::TextButton imdButton { "IMD%" };
+    juce::TextButton thdButton     { "THD%"    };
+    juce::TextButton imdButton     { "IMD%"    };
+    juce::TextButton lineButton    { "Line"    };
+    juce::TextButton heatmapButton { "Heatmap" };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SweepCurveDisplay)
 };

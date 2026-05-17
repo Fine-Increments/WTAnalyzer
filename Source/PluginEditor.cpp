@@ -126,6 +126,7 @@ WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioP
         // wipes both - harmless for the inactive one.
         audioProcessor.sweepCapture.reset();
         audioProcessor.sweepCurve.reset();
+        audioProcessor.sweepGrid.reset();
         repaint();
     };
 
@@ -911,10 +912,13 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
                 "Parameter Sweep\n"
                 "===============\n\n"
                 "What it measures\n"
-                "  A 1D X-Y curve of a headline metric versus a swept parameter\n"
-                "  - the Plugin Doctor style precision plot. X is the sweep\n"
-                "  position; Y is the selected metric. A header selector picks\n"
-                "  the metric: THD% or IMD%.\n\n"
+                "  A headline metric versus a swept parameter - the Plugin\n"
+                "  Doctor style precision plot. Two header selectors: the\n"
+                "  metric (THD% or IMD%) and the view (Line or Heatmap).\n"
+                "  Line is a 1D X-Y curve - X the sweep position, Y the\n"
+                "  metric scalar. Heatmap shows the metric's full per-\n"
+                "  harmonic / per-product distribution: X the harmonic or\n"
+                "  product, Y the sweep position, colour the level.\n\n"
                 "Input\n"
                 "  THD% expects a clean sine; IMD% expects a two-tone signal -\n"
                 "  the same inputs those modes need. The device parameter you\n"
@@ -940,19 +944,21 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
                 "  correctly only while the parameter sits still - the holds\n"
                 "  give the capture a settled signal at each extreme.\n\n"
                 "How to read it\n"
-                "  Green (L) and lime (R) traces are the captured curve per\n"
-                "  channel. A faint vertical line marks the current sweep\n"
-                "  position, with live dots showing the present reading. The\n"
-                "  Y axis auto-ranges to the captured data, in percent.\n\n"
-                "  Switching the metric clears the curve - THD% and IMD% are\n"
-                "  different units and would not share a Y axis.\n\n"
-                "2D Sweep Capture\n"
-                "  Not applicable - this mode IS the parameter-sweep capture,\n"
-                "  in its 1D X-Y form. The 2D heatmap is the sibling capability\n"
-                "  in the spectrum modes.\n\n"
+                "  Line view: green (L) and lime (R) traces are the captured\n"
+                "  curve per channel; a faint vertical line marks the current\n"
+                "  sweep position with live dots; the Y axis auto-ranges in\n"
+                "  percent. Heatmap view: each column is one harmonic (THD)\n"
+                "  or product (IMD), each row a sweep position (0 at the\n"
+                "  bottom), colour the differential level - so you see which\n"
+                "  harmonics grow where across the sweep. The capture feeds\n"
+                "  both views at once, so the Line / Heatmap toggle switches\n"
+                "  freely with no re-capture.\n\n"
+                "  Switching the metric clears the capture - THD% and IMD%\n"
+                "  are different units.\n\n"
                 "Stereo (L / R / Diff)\n"
-                "  Both channels are always drawn so channel asymmetry stays\n"
-                "  visible; the shared L / R / Diff toggle row is hidden here.\n";
+                "  The Line view draws both channels. The Heatmap shows the\n"
+                "  L channel (a heatmap cannot overlay L and R). The shared\n"
+                "  L / R / Diff toggle row is hidden here.\n";
 
         case Mode::PhaseResponse:
             return
