@@ -34,15 +34,17 @@ void FarinaIR::prepare (double sr, int /*samplesPerBlock*/)
     inverseSweep.clear();
     postScratch .clear();
     invScratch  .clear();
+    chL.preRoll    .clear();
     chL.postCapture.clear();
     chL.ir         .clear();
+    chR.preRoll    .clear();
     chR.postCapture.clear();
     chR.ir         .clear();
 
     reset();
 }
 
-void FarinaIR::ensureCapacity (int captureSamples, int filterSamples)
+void FarinaIR::ensureCapacity (int captureSamples, int filterSamples, int preRollSamples)
 {
     const int needed       = captureSamples + filterSamples;
     const int neededOrder  = nextPowerOf2Order (needed);
@@ -51,16 +53,20 @@ void FarinaIR::ensureCapacity (int captureSamples, int filterSamples)
     const bool postLOk    = (int) chL.postCapture.size() >= captureSamples;
     const bool postROk    = (int) chR.postCapture.size() >= captureSamples;
     const bool filterOk   = (int) inverseSweep.size() >= filterSamples;
+    const bool preLOk     = (int) chL.preRoll.size() == preRollSamples;
+    const bool preROk     = (int) chR.preRoll.size() == preRollSamples;
 
-    if (fftOk && postLOk && postROk && filterOk)
+    if (fftOk && postLOk && postROk && filterOk && preLOk && preROk)
         return;
 
     fftOrder = neededOrder;
     fftSize  = 1 << fftOrder;
     fft      = std::make_unique<juce::dsp::FFT> (fftOrder);
 
+    chL.preRoll    .assign ((size_t) preRollSamples, 0.0f);
     chL.postCapture.assign ((size_t) captureSamples, 0.0f);
     chL.ir         .assign ((size_t) filterSamples, 0.0f);
+    chR.preRoll    .assign ((size_t) preRollSamples, 0.0f);
     chR.postCapture.assign ((size_t) captureSamples, 0.0f);
     chR.ir         .assign ((size_t) filterSamples, 0.0f);
 
@@ -75,6 +81,8 @@ void FarinaIR::resetChannel (ChannelState& ch)
     ch.captureProgress.store (0, std::memory_order_relaxed);
     ch.captureLength  .store (0, std::memory_order_relaxed);
     ch.irLength       .store (0, std::memory_order_relaxed);
+    ch.preRollWrite = 0;
+    std::fill (ch.preRoll    .begin(), ch.preRoll    .end(), 0.0f);
     std::fill (ch.postCapture.begin(), ch.postCapture.end(), 0.0f);
     std::fill (ch.ir         .begin(), ch.ir         .end(), 0.0f);
 }
@@ -101,20 +109,23 @@ void FarinaIR::requestCapture()
 {
     if ((int) sampleRate <= 0) return;
 
-    const int sweepSamples = (int) std::ceil (sweepDurationSec * sampleRate);
-    const int tailSamples  = (int) std::ceil (tailSec          * sampleRate);
-    const int total        = sweepSamples + tailSamples;
+    const int sweepSamples   = (int) std::ceil (sweepDurationSec * sampleRate);
+    const int tailSamples    = (int) std::ceil (tailSec          * sampleRate);
+    const int preRollSamples = (int) std::ceil (kPreRollSec      * sampleRate);
+    const int total          = preRollSamples + sweepSamples + tailSamples;
 
     // Lazy allocation: first capture (or capture after params grow
     // beyond current capacity) pays the FFT setup + buffer cost here,
     // on the message thread, well outside the audio path.
-    ensureCapacity (total, sweepSamples);
+    ensureCapacity (total, sweepSamples, preRollSamples);
 
     auto armChannel = [&] (ChannelState& ch)
     {
         ch.captureLength  .store (total, std::memory_order_relaxed);
         ch.captureProgress.store (0,     std::memory_order_relaxed);
         ch.irLength       .store (0,     std::memory_order_relaxed);
+        ch.preRollWrite = 0;
+        std::fill (ch.preRoll.begin(), ch.preRoll.end(), 0.0f);
         ch.state          .store (State::Armed, std::memory_order_release);
     };
     armChannel (chL);
@@ -133,10 +144,26 @@ void FarinaIR::processChannel (ChannelState& ch, float preSample, float postSamp
 
     if (s == State::Armed)
     {
+        // Ring-buffer the post signal while waiting, so the samples before
+        // the trigger fires are never lost. A measurement sweep fades in,
+        // so the threshold trips a few ms late; the pre-roll recovers those
+        // samples and the captured sweep stays whole.
+        const int P = (int) ch.preRoll.size();
+        if (P > 0)
+        {
+            ch.preRoll[(size_t) ch.preRollWrite] = postSample;
+            ch.preRollWrite = (ch.preRollWrite + 1) % P;
+        }
+
         if (std::abs (preSample) > kTriggerThreshold)
         {
-            ch.postCapture[0] = postSample;
-            ch.captureProgress.store (1, std::memory_order_relaxed);
+            // Splice the pre-roll in front of the capture, oldest sample
+            // first. preRollWrite now points at the oldest entry.
+            for (int i = 0; i < P; ++i)
+                ch.postCapture[(size_t) i] =
+                    ch.preRoll[(size_t) ((ch.preRollWrite + i) % P)];
+
+            ch.captureProgress.store (P, std::memory_order_relaxed);
             ch.state.store (State::Capturing, std::memory_order_release);
         }
         return;
@@ -243,7 +270,41 @@ void FarinaIR::runDeconvolution (ChannelState& ch)
 
     fft->performRealOnlyInverseTransform (postScratch.data());
 
-    const int irStart = juce::jmax (0, sweepSamples - 1);
+    // Locate the linear IR by its peak. The sweep onset sits within the
+    // pre-roll region, so the linear IR lands at (onset + sweepSamples - 1)
+    // with onset <= preRollSamples. Search a bounded window around that:
+    // harmonic-distortion IRs sit seconds earlier and far lower in level,
+    // so the largest-magnitude sample in this window is the linear IR's
+    // direct arrival. This makes the result independent of how precisely
+    // the level threshold caught the (fading-in) sweep onset.
+    const int preRollSamples = juce::jmax (0, captureSamples - sweepSamples - tailSamples);
+    const int center         = preRollSamples + sweepSamples - 1;
+
+    // Search half-width: kIRSearchSec, but never so wide it could reach the
+    // 2nd-harmonic IR, which sits sweepDuration*ln(2)/ln(f1/f0) earlier. For
+    // multi-second sweeps that gap is seconds wide and the cap never binds;
+    // it only matters for unusually short sweeps.
+    const float harmonicGap = sweepDurationSec
+                            * std::log (2.0f)
+                            / std::log (juce::jmax (1.001f, f1Hz / f0Hz))
+                            * sampleRate;
+    const int searchW = juce::jmax (1, (int) std::ceil (
+                            juce::jmin (kIRSearchSec * sampleRate,
+                                        0.4f * harmonicGap)));
+    const int lo = juce::jmax (0, center - searchW);
+    const int hi = juce::jmin (fftSize, center + searchW + 1);
+
+    int   irStart = juce::jlimit (0, juce::jmax (0, fftSize - 1), center);
+    float peakAbs = -1.0f;
+    for (int i = lo; i < hi; ++i)
+    {
+        const float a = std::abs (postScratch[(size_t) i]);
+        if (a > peakAbs)
+        {
+            peakAbs = a;
+            irStart = i;
+        }
+    }
 
     ch.ir.assign ((size_t) tailSamples, 0.0f);
     for (int i = 0; i < tailSamples; ++i)

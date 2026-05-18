@@ -8,21 +8,32 @@
     Algorithm:
       1. User configures sweep parameters (f0, f1, duration, tail length)
          and clicks Capture.
-      2. Audio thread watches pre for a level threshold crossing - the
-         sweep onset - and on detection records the post signal for
-         (sweep_duration + tail) seconds.
-      3. Message thread generates the inverse-sweep filter
-         mathematically from the same parameters, FFT-convolves it with
-         the captured post, and extracts the linear IR from the result.
-      4. Display reads the resulting time-domain IR.
+      2. Audio thread continuously ring-buffers the post signal while it
+         watches pre for a level-threshold crossing. The crossing only has
+         to land somewhere on the sweep's rising onset - it is a coarse
+         "the sweep is playing now" arm, not a precise time origin. A
+         measurement sweep fades in, so the threshold trips a few ms late;
+         the pre-roll ring buffer preserves the samples before the trigger
+         so the captured sweep is never truncated.
+      3. On the trigger the pre-roll is spliced in front of the capture and
+         recording continues for (preroll + sweep + tail) seconds.
+      4. Message thread generates the inverse-sweep filter mathematically
+         from the same parameters, FFT-convolves it with the captured post,
+         and locates the linear IR by the deconvolution peak (see below).
+      5. Display reads the resulting time-domain IR.
 
     The inverse filter for a Farina log sweep
         s(t) = sin( K * (e^(t*L/T) - 1) )
     with K = 2*pi*f0*T/L and L = ln(f1/f0) is
         f(t) = s(T - t) * e^(-t*L/T)
-    so that s * f equals a delta at t = T (i.e. the deconvolution
-    output's linear-IR component is positioned starting at sample
-    sweep_duration_samples within the convolution result).
+    so that s * f equals a delta at t = T. The linear-IR component of the
+    deconvolution therefore sits at (sweep_onset + sweep_duration_samples)
+    within the convolution result. The onset is not known to the sample -
+    it lies somewhere within the pre-roll region - so the linear IR is
+    found by searching for the largest-magnitude sample in a bounded window
+    around that expected position. The harmonic-distortion IRs sit seconds
+    earlier and far lower in level, so the peak in that window is
+    unambiguously the linear IR's direct arrival.
 
     One-shot capture: a single sweep distributes test energy across the
     entire spectrum and across time, so SNR is already enormous; we don't
@@ -59,10 +70,17 @@ public:
     static constexpr float kMinTailSec     = 0.05f;
     static constexpr float kDefaultTailSec = 1.0f;
 
-    // Pre-signal threshold for sweep-onset auto-detection after the user
-    // arms a capture. Loose; the sweep starts at full amplitude so this
-    // catches the first sample.
+    // Pre-signal threshold that arms the capture once the user has clicked
+    // Capture. It only needs to fire somewhere on the sweep's rising onset:
+    // the pre-roll ring buffer recovers the samples before it and the peak
+    // search locates the exact IR position, so this is deliberately coarse.
     static constexpr float kTriggerThreshold = 0.05f;
+
+    // Length of post signal ring-buffered ahead of the trigger, so a sweep
+    // that fades in is never truncated; and the half-width of the window
+    // the linear IR is searched for around its expected position.
+    static constexpr float kPreRollSec  = 0.1f;
+    static constexpr float kIRSearchSec = 0.05f;
 
     enum class State
     {
@@ -134,8 +152,10 @@ public:
 private:
     struct ChannelState
     {
+        std::vector<float> preRoll;            // ring buffer of pre-trigger post samples
         std::vector<float> postCapture;
         std::vector<float> ir;
+        int                preRollWrite = 0;   // ring-buffer write cursor
         std::atomic<State> state           { State::Idle };
         std::atomic<int>   captureProgress { 0 };
         std::atomic<int>   captureLength   { 0 };
@@ -152,7 +172,7 @@ private:
     // requested capture and filter sizes. Idempotent and cheap when the
     // current capacity already covers the request. Called from the
     // message thread inside requestCapture().
-    void ensureCapacity (int captureSamples, int filterSamples);
+    void ensureCapacity (int captureSamples, int filterSamples, int preRollSamples);
 
     float sampleRate = 48000.0f;
 

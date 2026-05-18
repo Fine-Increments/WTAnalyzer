@@ -1,14 +1,19 @@
 # WTAnalyzer
 
 A JUCE-based VST3/AU analyzer plugin for measuring how audio effects respond
-to known test signals. Designed as a companion to
-[WTSynth](https://github.com/getdunne/WTSynth) (Shane Dunne) - WTSynth
-generates the test signal from a Python-rendered wavetable, the effect under
-test processes it, and WTAnalyzer sits downstream comparing pre and post.
+to known test signals. WTAnalyzer sits downstream of the effect under test
+and compares the pre-effect and post-effect signals to characterize what the
+device did.
 
-Together they form a two-plugin DSP test bench that lives in any DAW that
-supports sidechain routing, alongside the effect being developed or
+Its companion is **WTGenerator** - a purpose-built test-signal generator that
+emits the clean, reproducible reference signal WTAnalyzer measures against.
+Together they form a self-contained two-plugin DSP test bench that lives in
+any DAW supporting sidechain routing, alongside the effect being developed or
 characterized.
+
+WTAnalyzer and WTGenerator are inspired by Shane Dunne's WTSynth - the
+wavetable synth that sparked the idea - but they are a standalone pair and
+are not designed to be used with WTSynth.
 
 ## Status
 
@@ -105,12 +110,9 @@ Pre-alpha. Working analysis modes:
   expansion / gating. Per-channel L and R traces; accumulates
   continuously with a Clear button to start a fresh trace.
 
-Both IR modes are shipped but currently bottlenecked by WTSynth as a
-source: the wavetable cycling model produces an impulse train at
-playback pitch, and WTSynth's script-parameter UI has display bugs
-that make Farina parameters hard to set reliably. Full practical
-testing of these modes is gated on WTGenerator's render-mode-scripts
-arrival.
+Both IR modes are shipped. Full practical testing of them is gated on
+WTGenerator, which delivers the clean discrete impulses and precisely
+parameterized log sweeps these modes depend on.
 
 Supporting infrastructure:
 
@@ -183,14 +185,13 @@ Not yet built:
 - Multisine flatness, step response, transfer function from noise.
 - **Sidecar-driven parameter pre-fill** - the SidecarReader
   infrastructure exists but no analysis consumes its parameters
-  yet. Deferred to WTGenerator: the current WTSynth-style scripts
-  emit harmonic-index parameters, not the absolute Hz / durations
-  Farina / THD / IMD need, so pre-fill is built once WTGenerator's
-  render-mode scripts emit a real-units sidecar.
+  yet. Deferred to WTGenerator: pre-fill is built once WTGenerator
+  emits a sidecar carrying real-units parameters (absolute Hz,
+  durations) that the Farina / THD / IMD modes consume directly.
 - **WTGenerator companion plugin** (see WTGENERATOR.md design doc)
-  - purpose-built test-signal generator that resolves WTSynth's
-  structural limitations for IR / Farina / arbitrary-Hz two-tone
-  testing.
+  - the purpose-built test-signal generator: an expression-driven
+  source covering the classical measurement signals and the
+  signal-character sweeps WTAnalyzer is built to measure.
 
 ## How to use it
 
@@ -206,7 +207,7 @@ continues to monitor the processed audio as the user expects.
 
 Recommended Ableton Live setup:
 
-1. **Track A** ("Source"): WTSynth (or any signal source). Nothing else.
+1. **Track A** ("Source"): WTGenerator (or any signal source). Nothing else.
 2. **Track B** ("Effect"): `Audio From -> Track A, Post FX`. Monitor: `In`.
    Place the effect under test, then **WTAnalyzer at the end of the chain**.
 3. On WTAnalyzer's device header, expand the device, find the **Sidechain**
@@ -216,11 +217,14 @@ Recommended Ableton Live setup:
 This pattern adapts directly to Logic, Reaper, Cubase, Bitwig, Studio One,
 Pro Tools, and FL Studio via each DAW's existing sidechain UI.
 
-## Test-signal scripts
+## Test-signal scripts (transitional)
 
-The `scripts/` folder contains Python wavetable generators for use with
-WTSynth. Each script has a matching `.xml` exposing its parameters to
-WTSynth's parameter UI:
+Until WTGenerator ships, the `scripts/` folder holds a placeholder set of
+Python wavetable generators - WTSynth-format wavetables that any wavetable
+host can play as a stand-in signal source during this pre-alpha phase.
+WTGenerator supersedes them entirely; its built-in generators and
+expression engine replace the script-and-wavetable workflow. Each script
+has a matching `.xml` exposing its parameters:
 
 | Script | Purpose |
 |---|---|
@@ -260,7 +264,10 @@ Currently macOS only. Windows and Linux builds can be regenerated from
 ## Credits
 
 - **WTAnalyzer:** Fine Increments.
-- **WTSynth:** Shane Dunne (the source plugin we pair with).
+- **WTGenerator:** Fine Increments.
+- **WTSynth:** Shane Dunne - the wavetable synth that inspired this project.
+  WTAnalyzer and WTGenerator are a standalone pair and are not affiliated
+  with or dependent on WTSynth.
 - Built on [JUCE](https://juce.com).
 
 ## License
