@@ -41,6 +41,14 @@
             file="Source/FarinaDisplay.cpp"/>
       <FILE id="Farn02" name="FarinaDisplay.h" compile="0" resource="0"
             file="Source/FarinaDisplay.h"/>
+      <FILE id="MlDs01" name="MlsDisplay.cpp" compile="1" resource="0"
+            file="Source/MlsDisplay.cpp"/>
+      <FILE id="MlDs02" name="MlsDisplay.h" compile="0" resource="0"
+            file="Source/MlsDisplay.h"/>
+      <FILE id="SrDs01" name="StepResponseDisplay.cpp" compile="1" resource="0"
+            file="Source/StepResponseDisplay.cpp"/>
+      <FILE id="SrDs02" name="StepResponseDisplay.h" compile="0" resource="0"
+            file="Source/StepResponseDisplay.h"/>
       <FILE id="Strd01" name="StereoDisplay.cpp" compile="1" resource="0"
             file="Source/StereoDisplay.cpp"/>
       <FILE id="Strd02" name="StereoDisplay.h" compile="0" resource="0"
@@ -126,6 +134,14 @@
               file="Source/Analyses/CSD.cpp"/>
         <FILE id="CSDa02" name="CSD.h" compile="0" resource="0"
               file="Source/Analyses/CSD.h"/>
+        <FILE id="MlIr01" name="MlsIR.cpp" compile="1" resource="0"
+              file="Source/Analyses/MlsIR.cpp"/>
+        <FILE id="MlIr02" name="MlsIR.h" compile="0" resource="0"
+              file="Source/Analyses/MlsIR.h"/>
+        <FILE id="StRs01" name="StepResponse.cpp" compile="1" resource="0"
+              file="Source/Analyses/StepResponse.cpp"/>
+        <FILE id="StRs02" name="StepResponse.h" compile="0" resource="0"
+              file="Source/Analyses/StepResponse.h"/>
       </GROUP>
     </GROUP>
   </MAINGROUP>

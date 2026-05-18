@@ -22,6 +22,8 @@
 #include "Analyses/StereoAnalysis.h"
 #include "Analyses/PhaseResponse.h"
 #include "Analyses/DynamicsCurve.h"
+#include "Analyses/MlsIR.h"
+#include "Analyses/StepResponse.h"
 
 //==============================================================================
 /**
@@ -183,10 +185,12 @@ public:
         IMDMeasurement    = 3,
         DirectImpulseIR   = 4,
         FarinaIR          = 5,
-        StereoImage       = 6,
-        ParameterSweep    = 7,
-        PhaseResponse     = 8,
-        Dynamics          = 9
+        MlsIR             = 6,
+        StepResponse      = 7,
+        StereoImage       = 8,
+        ParameterSweep    = 9,
+        PhaseResponse     = 10,
+        Dynamics          = 11
     };
 
     // First analysis: derived from the existing pre/post spectrum FFT.
@@ -257,6 +261,15 @@ public:
     // curve - the shape that reveals compression, expansion, gating
     // and limiting. Accumulates continuously while the mode is active.
     DynamicsCurve dynamicsCurve;
+
+    // Eleventh analysis: time-domain impulse response via cross-correlation
+    // of an MLS stimulus. Sibling to FarinaIR - same IR plot, acquired from
+    // a maximum-length sequence instead of a sweep.
+    MlsIR mlsIR;
+
+    // Twelfth analysis: time-domain step response. Captures the device's
+    // output around a step edge and derives rise time and overshoot.
+    StepResponse stepResponse;
 
     // Sidecar JSON reader: parameter-source for analyses that need to
     // know exactly what test signal the script generated (PLANNING.md

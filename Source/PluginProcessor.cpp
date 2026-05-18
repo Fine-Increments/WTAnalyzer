@@ -43,8 +43,8 @@ WTAnalyzerAudioProcessor::createParameterLayout()
         "Active Analysis",
         juce::StringArray { "Frequency Response", "THD Measurement",
                             "Aliasing Detection", "IMD Measurement", "Direct Impulse IR",
-                            "Farina IR", "Stereo Image", "Parameter Sweep",
-                            "Phase Response", "Dynamics" },
+                            "Farina IR", "MLS IR", "Step Response", "Stereo Image",
+                            "Parameter Sweep", "Phase Response", "Dynamics" },
         0));
 
     // Level meter mode: false = Peak (default, matches DAW meter behaviour),
@@ -156,6 +156,29 @@ WTAnalyzerAudioProcessor::createParameterLayout()
         "Farina Tail (s)",
         juce::NormalisableRange<float> (FarinaIR::kMinTailSec, FarinaIR::kMaxTailSec, 0.0f, 0.5f),
         FarinaIR::kDefaultTailSec));
+
+    // MLS IR parameters. The order (sequence period) must match the order
+    // WTGenerator's MLS generator is running; tail is the displayed length
+    // of the recovered IR. Version hint 2 - added after the original param
+    // set, so AU parameter indices for the existing params are unchanged.
+    layout.add (std::make_unique<juce::AudioParameterInt> (
+        juce::ParameterID { "mlsIrOrder", 2 },
+        "MLS IR Order",
+        MlsIR::kMinOrder, MlsIR::kMaxOrder, MlsIR::kDefaultOrder));
+
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "mlsIrTailSec", 2 },
+        "MLS IR Tail (s)",
+        juce::NormalisableRange<float> (MlsIR::kMinTailSec, MlsIR::kMaxTailSec, 0.0f, 0.5f),
+        MlsIR::kDefaultTailSec));
+
+    // Step Response: the post-step capture window.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "stepWindowMs", 2 },
+        "Step Window (ms)",
+        juce::NormalisableRange<float> (StepResponse::kMinWindowMs,
+                                        StepResponse::kMaxWindowMs, 0.0f, 0.5f),
+        StepResponse::kDefaultWindowMs));
 
     // 2D sweep capture across signal-character / parameter axes.
     // sweepPosition is the DAW-automatable lane; the user routes the
@@ -347,6 +370,13 @@ void WTAnalyzerAudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
                              *apvts.getRawParameterValue ("farinaSweepSec"),
                              *apvts.getRawParameterValue ("farinaTailSec"));
 
+    mlsIR.prepare (sampleRate, samplesPerBlock);
+    mlsIR.setParams ((int) *apvts.getRawParameterValue ("mlsIrOrder"),
+                     *apvts.getRawParameterValue ("mlsIrTailSec"));
+
+    stepResponse.prepare (sampleRate, samplesPerBlock);
+    stepResponse.setParams (*apvts.getRawParameterValue ("stepWindowMs"));
+
     sweepCapture.prepare (kSpectrumBins);
     sweepCurve  .reset();
     sweepGrid   .reset();
@@ -437,6 +467,8 @@ void WTAnalyzerAudioProcessor::runSpectrumFft()
         stereoAnalysis   .reset();
         phaseResponse    .reset();
         dynamicsCurve    .reset();
+        mlsIR            .reset();
+        stepResponse     .reset();
         lastActiveAnalysisIndex = activeIndex;
     }
 
@@ -791,6 +823,8 @@ void WTAnalyzerAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     const bool irActive       = activeIndexLocal == (int) AnalysisMode::DirectImpulseIR;
     const bool farinaActive   = activeIndexLocal == (int) AnalysisMode::FarinaIR;
     const bool stereoActive   = activeIndexLocal == (int) AnalysisMode::StereoImage;
+    const bool mlsActive      = activeIndexLocal == (int) AnalysisMode::MlsIR;
+    const bool stepActive     = activeIndexLocal == (int) AnalysisMode::StepResponse;
 
     // Transport state for the Parameter Sweep capture gate. Assume the
     // transport is playing if the host does not report a playhead, so
@@ -824,6 +858,10 @@ void WTAnalyzerAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
                              *apvts.getRawParameterValue ("farinaF1Hz"),
                              *apvts.getRawParameterValue ("farinaSweepSec"),
                              *apvts.getRawParameterValue ("farinaTailSec"));
+
+    mlsIR.setParams ((int) *apvts.getRawParameterValue ("mlsIrOrder"),
+                     *apvts.getRawParameterValue ("mlsIrTailSec"));
+    stepResponse.setParams (*apvts.getRawParameterValue ("stepWindowMs"));
 
     if (postBus.getNumChannels() > 0)
     {
@@ -872,6 +910,14 @@ void WTAnalyzerAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
             if (farinaActive)
                 farinaIR.processSample (preCh0 ? preCh0[n] : 0.0f, postCh0[n],
                                         preCh1 ? preCh1[n] : 0.0f, postCh1[n]);
+
+            if (mlsActive)
+                mlsIR.processSample (preCh0 ? preCh0[n] : 0.0f, postCh0[n],
+                                     preCh1 ? preCh1[n] : 0.0f, postCh1[n]);
+
+            if (stepActive)
+                stepResponse.processSample (preCh0 ? preCh0[n] : 0.0f, postCh0[n],
+                                            preCh1 ? preCh1[n] : 0.0f, postCh1[n]);
         }
     }
 

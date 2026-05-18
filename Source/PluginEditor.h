@@ -23,6 +23,8 @@
 #include "SweepCurveDisplay.h"
 #include "PhaseDisplay.h"
 #include "DynamicsDisplay.h"
+#include "MlsDisplay.h"
+#include "StepResponseDisplay.h"
 #include "LevelMetersPanel.h"
 #include "LatencyPanel.h"
 
@@ -218,6 +220,13 @@ private:
     // Dynamics display path - the device's input-vs-output transfer curve.
     DynamicsDisplay  dynamicsDisplay;
 
+    // MLS IR display path - sibling time-domain IR plot, MLS-acquired.
+    MlsDisplay       mlsDisplay;
+
+    // Step Response display path - the captured step waveform plus the
+    // derived rise-time / overshoot metrics.
+    StepResponseDisplay stepResponseDisplay;
+
     // Shown over whichever panel is active when the sidechain input is
     // not connected. Visibility is driven from the timer.
     SidechainNotice  sidechainNotice;
@@ -255,6 +264,10 @@ private:
     juce::TextButton sweepClearButton    { "Clear" };
     juce::TextButton farinaCaptureButton { "Capture" };
     juce::TextButton farinaClearButton   { "Clear" };
+    juce::TextButton mlsCaptureButton    { "Capture" };
+    juce::TextButton mlsClearButton      { "Clear" };
+    juce::TextButton stepCaptureButton   { "Capture" };
+    juce::TextButton stepClearButton     { "Clear" };
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> sweepCaptureAttachment;
 
     // L / R / Diff toggle row - shared across every mode that uses the

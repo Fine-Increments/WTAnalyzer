@@ -60,6 +60,8 @@ WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioP
       sweepCurveDisplay    (p),
       phaseDisplay         (p),
       dynamicsDisplay      (p),
+      mlsDisplay           (p),
+      stepResponseDisplay  (p),
       levelMetersPanel     (p),
       latencyPanel         (p)
 {
@@ -76,6 +78,8 @@ WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioP
     addChildComponent (sweepCurveDisplay);
     addChildComponent (phaseDisplay);
     addChildComponent (dynamicsDisplay);
+    addChildComponent (mlsDisplay);
+    addChildComponent (stepResponseDisplay);
     addAndMakeVisible (levelMetersPanel);
     addAndMakeVisible (latencyPanel);
 
@@ -147,6 +151,34 @@ WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioP
     farinaClearButton.onClick = [this]
     {
         audioProcessor.farinaIR.reset();
+        repaint();
+    };
+
+    // MLS IR and Step Response each get the same momentary Capture / Clear
+    // pair, sharing the header slot with the FR sweep and Farina pairs.
+    addChildComponent (mlsCaptureButton);
+    mlsCaptureButton.onClick = [this]
+    {
+        audioProcessor.mlsIR.requestCapture();
+        repaint();
+    };
+    addChildComponent (mlsClearButton);
+    mlsClearButton.onClick = [this]
+    {
+        audioProcessor.mlsIR.reset();
+        repaint();
+    };
+
+    addChildComponent (stepCaptureButton);
+    stepCaptureButton.onClick = [this]
+    {
+        audioProcessor.stepResponse.requestCapture();
+        repaint();
+    };
+    addChildComponent (stepClearButton);
+    stepClearButton.onClick = [this]
+    {
+        audioProcessor.stepResponse.reset();
         repaint();
     };
 
@@ -327,6 +359,8 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeName (int modeIndex)
         case Mode::ParameterSweep:    return "Parameter Sweep";
         case Mode::PhaseResponse:     return "Phase Response";
         case Mode::Dynamics:          return "Dynamics";
+        case Mode::MlsIR:             return "MLS IR";
+        case Mode::StepResponse:      return "Step Response";
     }
     return "Analysis";
 }
@@ -1032,6 +1066,71 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
                 "  shows two distinct curves. There is no Diff toggle -\n"
                 "  the transfer curve is per-channel device behaviour, not\n"
                 "  a stereo difference.\n";
+
+        case Mode::MlsIR:
+            return
+                "MLS IR\n"
+                "======\n\n"
+                "What it measures\n"
+                "  The device's impulse response, recovered by cross-correlating its\n"
+                "  output against a maximum-length-sequence (MLS) stimulus. An MLS has a\n"
+                "  flat spectrum and a near-perfect autocorrelation, so correlating post\n"
+                "  against pre yields the device's IR directly.\n\n"
+                "Input\n"
+                "  WTGenerator's MLS generator. Set the Order control here to the SAME\n"
+                "  order the generator is running - the order fixes the sequence period\n"
+                "  (2^order - 1 samples), and the analyzer must capture exactly that.\n"
+                "  Let the MLS play continuously; it is a periodic stimulus.\n\n"
+                "How to capture\n"
+                "  Click Capture (panel header) with the MLS already playing. The\n"
+                "  analyzer grabs two full periods - the first lets the device settle\n"
+                "  into steady state, the second is the measured period. Clear wipes\n"
+                "  the result.\n\n"
+                "How to read it\n"
+                "  The plot is the recovered IR - linear time on X, amplitude on Y.\n"
+                "  The leading transient is the device's response; the noise floor\n"
+                "  after it shows the measurement's dynamic range. Export writes the\n"
+                "  IR to a stereo WAV.\n\n"
+                "Order\n"
+                "  Higher order = longer period = a longer IR captured without time-\n"
+                "  aliasing and a lower noise floor, at the cost of a longer capture.\n"
+                "  Pick an order whose period comfortably exceeds the device's decay\n"
+                "  (order 16 is ~1.4 s at 48 kHz).\n\n"
+                "Tail\n"
+                "  The displayed length of the IR. The recovered IR spans a full\n"
+                "  period; Tail trims the view to the portion carrying the response.\n\n"
+                "Stereo (L / R / Diff)\n"
+                "  L and R are correlated independently. Diff overlays R - L.\n";
+
+        case Mode::StepResponse:
+            return
+                "Step Response\n"
+                "=============\n\n"
+                "What it measures\n"
+                "  The device's output when fed a step - an instant or slewed jump\n"
+                "  from silence to a constant level. It reveals transient behaviour\n"
+                "  the frequency response cannot: rise time, overshoot, ringing,\n"
+                "  settling and droop.\n\n"
+                "Input\n"
+                "  WTGenerator's Step generator, in One-Shot repeat mode. A single\n"
+                "  step edge is all that is needed.\n\n"
+                "How to capture\n"
+                "  Click Capture (panel header), then play the step. The analyzer\n"
+                "  triggers on the rising edge and records the device output for the\n"
+                "  Window length. A pre-roll buffer keeps the baseline just before\n"
+                "  the step, so the foot of a slow-rising step is never lost. Clear\n"
+                "  resets.\n\n"
+                "How to read it\n"
+                "  The plot is the captured response; the vertical marker is t = 0,\n"
+                "  the step edge. The header shows the derived metrics:\n"
+                "    - Rise time: 10% to 90% of the step amplitude.\n"
+                "    - Overshoot: how far the response peaks past its settled level,\n"
+                "      as a percentage of the step amplitude.\n\n"
+                "Window\n"
+                "  How much of the post-step response to capture - long enough to\n"
+                "  see the response fully settle.\n\n"
+                "Stereo (L / R / Diff)\n"
+                "  L and R are captured independently. Diff overlays R - L.\n";
     }
     return "No help available for this mode.";
 }
@@ -1356,6 +1455,8 @@ void WTAnalyzerAudioProcessorEditor::applyAnalysisMode (int modeIndex)
     const bool wantsSweepPath    = (modeIndex == (int) Mode::ParameterSweep);
     const bool wantsPhasePath    = (modeIndex == (int) Mode::PhaseResponse);
     const bool wantsDynamicsPath = (modeIndex == (int) Mode::Dynamics);
+    const bool wantsMlsPath      = (modeIndex == (int) Mode::MlsIR);
+    const bool wantsStepPath     = (modeIndex == (int) Mode::StepResponse);
 
     spectrumDisplay  .setVisible (wantsSpectrumPath);
     cursorReadout    .setVisible (wantsSpectrumPath);
@@ -1367,6 +1468,8 @@ void WTAnalyzerAudioProcessorEditor::applyAnalysisMode (int modeIndex)
     sweepCurveDisplay.setVisible (wantsSweepPath);
     phaseDisplay     .setVisible (wantsPhasePath);
     dynamicsDisplay  .setVisible (wantsDynamicsPath);
+    mlsDisplay         .setVisible (wantsMlsPath);
+    stepResponseDisplay.setVisible (wantsStepPath);
 
     // The alias-view toggle row lives inside SpectrumDisplay (it's tied to
     // a specific mode within the shared spectrum panel) but its visibility
@@ -1384,6 +1487,10 @@ void WTAnalyzerAudioProcessorEditor::applyAnalysisMode (int modeIndex)
     sweepClearButton   .setVisible (wantsSweepButtons);
     farinaCaptureButton.setVisible (isFarinaMode);
     farinaClearButton  .setVisible (isFarinaMode);
+    mlsCaptureButton   .setVisible (wantsMlsPath);
+    mlsClearButton     .setVisible (wantsMlsPath);
+    stepCaptureButton  .setVisible (wantsStepPath);
+    stepClearButton    .setVisible (wantsStepPath);
 
     // L / R channel toggles: visible in every mode that shows per-channel
     // data. The Diff toggle is restricted to the bar / waveform modes
@@ -1393,9 +1500,11 @@ void WTAnalyzerAudioProcessorEditor::applyAnalysisMode (int modeIndex)
     // dedicated stereo-difference analysis lives in the Stereo Image mode.
     const bool wantsStereoToggles = wantsSpectrumPath || wantsThdPath
                                   || wantsImdPath || wantsIrPath || wantsFarinaPath
-                                  || wantsPhasePath || wantsDynamicsPath;
+                                  || wantsPhasePath || wantsDynamicsPath
+                                  || wantsMlsPath || wantsStepPath;
     const bool wantsDiffToggle    = wantsThdPath || wantsImdPath
-                                  || wantsIrPath || wantsFarinaPath;
+                                  || wantsIrPath || wantsFarinaPath
+                                  || wantsMlsPath || wantsStepPath;
 
     // Entering an L/R-only mode while Diff was left engaged from a bar /
     // waveform mode would leave L and R both off (Diff is exclusive),
@@ -1444,6 +1553,8 @@ void WTAnalyzerAudioProcessorEditor::resized()
     sweepCurveDisplay.setUiScale (s);
     phaseDisplay    .setUiScale (s);
     dynamicsDisplay .setUiScale (s);
+    mlsDisplay         .setUiScale (s);
+    stepResponseDisplay.setUiScale (s);
     sidechainNotice .setUiScale (s);
     levelMetersPanel.setUiScale (s);
     latencyPanel    .setUiScale (s);
@@ -1472,6 +1583,10 @@ void WTAnalyzerAudioProcessorEditor::resized()
         sweepCaptureButton  .setBounds (captureRect);
         farinaClearButton   .setBounds (clearRect);
         farinaCaptureButton .setBounds (captureRect);
+        mlsClearButton      .setBounds (clearRect);
+        mlsCaptureButton    .setBounds (captureRect);
+        stepClearButton     .setBounds (clearRect);
+        stepCaptureButton   .setBounds (captureRect);
     }
 
     bounds.removeFromTop (sx (8));
@@ -1519,6 +1634,8 @@ void WTAnalyzerAudioProcessorEditor::resized()
     sweepCurveDisplay.setBounds (bounds);
     phaseDisplay     .setBounds (bounds);
     dynamicsDisplay  .setBounds (bounds);
+    mlsDisplay         .setBounds (bounds);
+    stepResponseDisplay.setBounds (bounds);
 
     // The sidechain notice covers the whole display rect.
     sidechainNotice.setBounds (bounds);
