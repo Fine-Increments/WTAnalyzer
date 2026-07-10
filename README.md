@@ -220,8 +220,8 @@ Pro Tools, and FL Studio via each DAW's existing sidechain UI.
 ## Test-signal scripts (transitional)
 
 Until WTGenerator ships, the `scripts/` folder holds a placeholder set of
-Python wavetable generators - WTSynth-format wavetables that any wavetable
-host can play as a stand-in signal source during this pre-alpha phase.
+Python wavetable generators - plain wavetable WAVs that any wavetable host
+can play as a stand-in signal source during this pre-alpha phase.
 WTGenerator supersedes them entirely; its built-in generators and
 expression engine replace the script-and-wavetable workflow. Each script
 has a matching `.xml` exposing its parameters:
@@ -238,11 +238,10 @@ has a matching `.xml` exposing its parameters:
 | `pwm.py` | Pulse-width modulated waveforms |
 | `two_tone.py` | Two-sine test signals for IMD measurement |
 
-WTSynth on macOS shells out to `/usr/bin/python3` (the system Python),
-not your shell's `python3`. Install script dependencies against the
-system interpreter:
+These scripts need `numpy` and `soundfile`. Run them with whatever
+`python3` is on your path:
 
-    sudo -H /usr/bin/python3 -m pip install numpy soundfile
+    python3 -m pip install numpy soundfile
 
 ## Building
 
