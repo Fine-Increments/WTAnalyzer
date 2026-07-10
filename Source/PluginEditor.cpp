@@ -58,6 +58,7 @@ WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioP
       farinaDisplay        (p),
       stereoDisplay        (p),
       sweepCurveDisplay    (p),
+      sweepView            (p),
       phaseDisplay         (p),
       dynamicsDisplay      (p),
       mlsDisplay           (p),
@@ -76,6 +77,7 @@ WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioP
     addChildComponent (farinaDisplay);
     addChildComponent (stereoDisplay);
     addChildComponent (sweepCurveDisplay);
+    addChildComponent (sweepView);
     addChildComponent (phaseDisplay);
     addChildComponent (dynamicsDisplay);
     addChildComponent (mlsDisplay);
@@ -307,7 +309,7 @@ WTAnalyzerAudioProcessorEditor::~WTAnalyzerAudioProcessorEditor()
 void WTAnalyzerAudioProcessorEditor::chooseSidecarFile()
 {
     auto chooser = std::make_shared<juce::FileChooser> (
-        "Select wavetable.json sidecar",
+        "Select WTGenerator sidecar JSON",
         juce::File::getSpecialLocation (juce::File::userHomeDirectory),
         "*.json");
 
@@ -356,7 +358,6 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeName (int modeIndex)
         case Mode::DirectImpulseIR:   return "Direct Impulse IR";
         case Mode::FarinaIR:          return "Farina IR";
         case Mode::StereoImage:       return "Stereo Image";
-        case Mode::ParameterSweep:    return "Parameter Sweep";
         case Mode::PhaseResponse:     return "Phase Response";
         case Mode::Dynamics:          return "Dynamics";
         case Mode::MlsIR:             return "MLS IR";
@@ -383,8 +384,9 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
                 "    - Linear or log sine sweep, 20 Hz - 20 kHz, 10+ seconds.\n"
                 "    - Pink noise (equal energy per octave - good for EQ-style devices).\n"
                 "    - White noise (equal energy per Hz - good for full-spectrum coverage).\n"
-                "  Wavetable sweeps also work and surface signal-character response when\n"
-                "  characterising how an effect reacts to different spectral shapes.\n\n"
+                "    - Multisine - a flat harmonic comb that measures the response at\n"
+                "      each harmonic with a deterministic, repeatable stimulus.\n"
+                "  All are WTGenerator built-in generators.\n\n"
                 "How to read it\n"
                 "  Green trace = the device's gain at each frequency, drawn on top of the\n"
                 "  pre/post spectra. Flat at 0 dB means transparent. Peaks or dips reveal\n"
@@ -393,25 +395,25 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
                 "  as 'no measurement' and break the trace path. This prevents misleading\n"
                 "  spikes where pre is essentially silent and any post energy would\n"
                 "  divide to infinity.\n\n"
-                "2D Sweep Capture (signal-character axis)\n"
+                "Sweep Capture\n"
                 "  The Capture and Clear buttons in the plugin header (left of the\n"
                 "  Load Sidecar button) drive a 2D recorder. While Capture is on,\n"
                 "  every FFT frame's frequency response is bucketed into a 2D grid\n"
                 "  indexed by the 'Sweep Position' APVTS parameter (0..1,\n"
-                "  DAW-automatable). Route the same DAW automation lane to both\n"
-                "  WTSynth's WT Pos and WTAnalyzer's Sweep Position; as the wavetable\n"
-                "  morphs, the analyzer accumulates a heatmap of how the device responds\n"
-                "  at each spectral shape.\n\n"
-                "  Visual style: smooth heatmap (continuous X = log frequency, Y =\n"
-                "  sweep position 0..1). Colourmap is bipolar around 0 dB (the\n"
-                "  unity-gain anchor): black at -60 dB (heavy cut) -> green at 0 dB\n"
-                "  (transparent device) -> red at +12 dB (positive gain). 'No\n"
-                "  measurement' bins stay at the plot-area background colour so\n"
-                "  empty regions are visually distinct from measured-zero regions.\n"
-                "  A thin whitesmoke horizontal line marks the current sweepPosition\n"
-                "  ('you are here').\n\n"
-                "  Clear wipes the heatmap. Toggle Capture off to freeze the heatmap\n"
-                "  while continuing to view the live trace.\n\n"
+                "  DAW-automatable). Route the same DAW automation lane to both a\n"
+                "  WTGenerator parameter and WTAnalyzer's Sweep Position; as that\n"
+                "  parameter moves, the analyzer accumulates a heatmap of how the\n"
+                "  device responds at each point along the sweep.\n\n"
+                "  Three views, chosen by the Line / Heatmap / 3D selector at the\n"
+                "  top of the panel:\n"
+                "    Line:    the captured per-position response curves overlaid,\n"
+                "             position-graded, the current position highlighted.\n"
+                "    Heatmap: log frequency on X, sweep position on Y, colour the\n"
+                "             response level.\n"
+                "    3D:      the same grid as an orbitable surface - drag to\n"
+                "             rotate, scroll to zoom, double-click to reset.\n\n"
+                "  Clear wipes the capture. Toggle Capture off to return to the\n"
+                "  live trace.\n\n"
                 "Stereo (L / R / Diff)\n"
                 "  FR is now per-channel. Chartreuse trace = L (master) FR,\n"
                 "  green trace = R FR. The L / R / Diff toggle row at the\n"
@@ -423,18 +425,17 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
                 "  diverge in gain. Mono signals (channel 1 sources from\n"
                 "  channel 0) overlap pixel-for-pixel - L and R sit on top of\n"
                 "  each other and you see only the chartreuse master trace.\n"
-                "  In 2D heatmap mode (Capture on) the toggles will eventually\n"
-                "  pick which single channel's heatmap to render at full\n"
-                "  resolution; that L/R/Diff-aware heatmap variant is not\n"
-                "  wired yet (today the heatmap captures L only).\n\n"
+                "  The sweep-capture views (Line / Heatmap / 3D) show the L\n"
+                "  channel only; the L / R / Diff toggles apply to the live\n"
+                "  trace.\n\n"
                 "Tips\n"
                 "  - Time-align pre and post before measuring. Use the Latency panel to\n"
                 "    measure the device's latency and apply that delay to pre.\n"
                 "  - A 10+ second sweep gives the smoothest result with the most coverage.\n"
                 "    Very short sweeps leave the upper end under-resolved.\n"
-                "  - For 2D sweep capture, a slow WT Pos automation (5-15 seconds across\n"
-                "    the full 0..1 range) gives enough frames per position bucket for a\n"
-                "    smooth heatmap.\n";
+                "  - For sweep capture, a slow automation of the swept parameter\n"
+                "    (5-15 seconds across the full 0..1 range) gives enough frames per\n"
+                "    position bucket for a smooth heatmap.\n";
 
         case Mode::THDMeasurement:
             return
@@ -452,12 +453,10 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
                 "  you select.\n\n"
                 "Input\n"
                 "  A steady sine tone. Any audible-range frequency works; 1 kHz is the\n"
-                "  textbook reference. WTSynth + the harmonics.py script playing a single\n"
-                "  harmonic is the easiest way.\n\n"
-                "  Differential mode also accepts non-sine inputs (saws, squares, custom\n"
-                "  wavetables) - the math correctly isolates added energy regardless of\n"
-                "  what's in pre. The bars then show how the device shapes each existing\n"
-                "  harmonic.\n\n"
+                "  textbook reference. WTGenerator's Sine generator is the easiest source.\n\n"
+                "  Differential mode also accepts non-sine inputs - the math correctly\n"
+                "  isolates added energy regardless of what's in pre. The bars then show\n"
+                "  how the device shapes each existing harmonic.\n\n"
                 "Views (Diff / Pre / Post)\n"
                 "  Diff: Added energy per harmonic relative to pre's fundamental. The\n"
                 "        canonical THD view - shows only what the device introduced.\n"
@@ -478,19 +477,16 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
                 "    shows 'play a single sine tone' rather than reporting garbage.\n"
                 "  - For very tonal sources, h1 stays at 0 dB (the reference) and only\n"
                 "    h2+ tells you anything diagnostic.\n\n"
-                "2D Sweep Capture\n"
-                "  Not yet implemented for this mode. The framework (Sweep Position\n"
-                "  parameter and header Capture / Clear buttons) is built but the\n"
-                "  Capture / Clear buttons are hidden outside Frequency Response.\n\n"
-                "  Visual style when added: tile grid (discrete X = harmonic index\n"
-                "  h1..h16 as chunky equal-width columns, Y = sweep position 0..1,\n"
-                "  colour = dB ratio). Colourmap is monotonic 'more is worse' since\n"
-                "  THD harmonics are always below the fundamental: black at -100 dB\n"
-                "  (clean) -> green at -40 dB (audible) -> red at -10 dB (severe).\n\n"
-                "  Typical use will be: route a DAW automation lane to both WTSynth's\n"
-                "  WT Pos and WTAnalyzer's Sweep Position, then read the heatmap as\n"
-                "  'which signal characters provoke the most distortion at each\n"
-                "  harmonic.'\n\n"
+                "Sweep Capture\n"
+                "  THD% can be recorded across a swept parameter, in-mode. Arm the\n"
+                "  header Capture button, then automate one DAW lane into both a\n"
+                "  WTGenerator parameter and WTAnalyzer's Sweep Position. While armed\n"
+                "  the panel switches to the swept-result view; toggle Capture off to\n"
+                "  return to the live bars. Clear wipes the captured sweep.\n\n"
+                "  Two views, selectable in the swept-result panel:\n"
+                "    Line:    THD% versus sweep position, an X-Y curve per channel.\n"
+                "    Heatmap: the per-harmonic distribution - X harmonic h2..h16,\n"
+                "             Y sweep position, colour the differential dB.\n\n"
                 "Stereo (L / R / Diff)\n"
                 "  Per-channel THD is live. Each harmonic slot in the bar\n"
                 "  chart subdivides into paired sub-bars: L (master colour\n"
@@ -539,23 +535,21 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
                 "    a sweep, observe the differential. Swap to the device under test,\n"
                 "    Clear, repeat. The relative green levels show which device aliases\n"
                 "    more.\n"
-                "  - WTSynth's own interpolation produces residual aliasing visible in\n"
-                "    Pre view. The differential subtracts this so the green is strictly\n"
-                "    the device's contribution.\n\n"
-                "2D Sweep Capture\n"
-                "  Not yet implemented for this mode. The Hold/Clear inside the\n"
-                "  alias panel are a different feature (peak-hold across a single\n"
-                "  sweep at fixed parameter).\n\n"
-                "  Visual style when added: smooth heatmap (continuous X = log\n"
-                "  frequency, Y = sweep position 0..1, colour = alias residue dB FS).\n"
-                "  Colourmap is monotonic 'more is worse' since alias values are\n"
-                "  always at or below 0 dB FS: black at -100 dB FS (clean) -> green\n"
-                "  at -50 dB FS (moderate alias) -> red at -20 dB FS or higher\n"
-                "  (severe alias). 'No measurement' bins stay at the plot-area\n"
-                "  background.\n\n"
-                "  Typical use will be: route DAW automation to both WTSynth's WT\n"
-                "  Pos and WTAnalyzer's Sweep Position to see where in the audible\n"
-                "  band aliasing emerges as the input character morphs.\n\n"
+                "  - Any residue in the test signal itself shows up in Pre view; the\n"
+                "    differential subtracts it, so the green trace is strictly the\n"
+                "    device's contribution.\n\n"
+                "Sweep Capture\n"
+                "  The off-grid added-energy curve can be recorded across a swept\n"
+                "  parameter. Arm the header Capture button, then automate one DAW\n"
+                "  lane into both a WTGenerator parameter and WTAnalyzer's Sweep\n"
+                "  Position; the panel switches to the swept-result view. Clear\n"
+                "  wipes it; toggle Capture off to return to the live spectrum.\n\n"
+                "  Three views (Line / Heatmap / 3D): the captured per-position\n"
+                "  aliasing curves overlaid, a log-frequency x sweep-position\n"
+                "  colour map, or an orbitable 3D surface. Reveals where in the\n"
+                "  audible band aliasing emerges as the stimulus changes.\n\n"
+                "  (The panel's own Hold / Clear are a separate feature -\n"
+                "  peak-hold across a single sweep at a fixed parameter.)\n\n"
                 "Stereo (L / R / Diff)\n"
                 "  Per-channel alias residue is live. Composite view shows the\n"
                 "  pre spectrum plus a per-channel alias trace: chartreuse (L,\n"
@@ -586,8 +580,9 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
                 "    - SMPTE: 60 Hz + 7 kHz, amplitude ratio 4:1 (bass-heavy nonlinearity).\n"
                 "    - CCIF:  19 + 20 kHz, equal amplitude (upper-band products).\n"
                 "    - DIN:   250 Hz + 8 kHz, equal amplitude.\n"
-                "  Any two distinct tones at least 100 Hz apart work. The two_tone.py\n"
-                "  script in the scripts folder generates these as WTSynth wavetables.\n\n"
+                "  Any two distinct tones at least 100 Hz apart work. WTGenerator's\n"
+                "  Two-Tone generator produces them; its preset library includes the\n"
+                "  SMPTE and CCIF pairs.\n\n"
                 "Views (Diff / Pre / Post)\n"
                 "  Diff: added-energy per product. The canonical IMD view.\n"
                 "  Pre:  pre's energy at each product position. For a clean test signal\n"
@@ -604,23 +599,18 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
                 "Hold / Freeze\n"
                 "  Same semantics as THD - per-bar peak-hold + display freeze.\n\n"
                 "Tips\n"
-                "  - WTSynth's mipmap engine attenuates high wavetable harmonics at high\n"
-                "    playback pitches. Keep harmonic numbers low and increase playback\n"
-                "    pitch to reach high Hz pairs.\n"
                 "  - Symmetric clippers (Saturator Analog Clip / Soft Sine) produce\n"
                 "    primarily odd-order products. Asymmetric stages (tube biases) show\n"
                 "    strong even-order. Cross-check by toggling between modes.\n\n"
-                "2D Sweep Capture\n"
-                "  Not yet implemented for this mode.\n\n"
-                "  Visual style when added: tile grid (discrete X = product index\n"
-                "  with formula labels - f1+f2, f1-f2, 2f1+f2, ... - in 12 chunky\n"
-                "  equal-width columns, ordered as in By Order layout. Y = sweep\n"
-                "  position 0..1, colour = dB ratio). Colourmap is monotonic 'more\n"
-                "  is worse': black at -100 dB (clean) -> green at -40 dB (audible)\n"
-                "  -> red at -10 dB (severe).\n\n"
-                "  Typical use will be: automate one source-side parameter (e.g.\n"
-                "  drive amount) alongside WTAnalyzer's Sweep Position to see which\n"
-                "  input conditions trigger the worst intermodulation per product.\n\n"
+                "Sweep Capture\n"
+                "  IMD% can be recorded across a swept parameter, in-mode. Arm the\n"
+                "  header Capture button, then automate one DAW lane into both a\n"
+                "  WTGenerator parameter and WTAnalyzer's Sweep Position. While armed\n"
+                "  the panel switches to the swept-result view; toggle Capture off to\n"
+                "  return to the live bars. Clear wipes the captured sweep.\n\n"
+                "  Two views: Line plots IMD% versus sweep position per channel;\n"
+                "  Heatmap shows the per-product distribution - X the 12 products,\n"
+                "  Y sweep position, colour the differential dB.\n\n"
                 "Stereo (L / R / Diff)\n"
                 "  Per-channel IMD is live. Each product slot in the bar chart\n"
                 "  subdivides into paired sub-bars: L (master colour for the\n"
@@ -643,18 +633,16 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
                 "  output IS the impulse response, captures across multiple impulses are\n"
                 "  averaged for SNR.\n\n"
                 "Input\n"
-                "  A periodic impulse train. The impulse.py script generates this as a\n"
-                "  WTSynth wavetable - each cycle contains a single 0.95 amplitude sample\n"
-                "  surrounded by silence.\n\n"
+                "  WTGenerator's Impulse generator in Periodic repeat mode - a periodic\n"
+                "  impulse train, each impulse a single full-scale sample surrounded by\n"
+                "  silence. The Periodic Rate parameter sets how often it fires.\n\n"
                 "Critical constraint\n"
-                "  WTSynth plays the wavetable ONCE PER PLAYBACK CYCLE, so the impulse\n"
-                "  rate equals the played MIDI note frequency. At MIDI A2 (110 Hz) you\n"
-                "  get 110 impulses per second - period 9 ms. If your IR window is\n"
-                "  longer than that period, successive impulse responses overlap and\n"
-                "  the average becomes garbage.\n\n"
-                "  Rule of thumb: impulse period > IR window. For a 250 ms window,\n"
-                "  playback fundamental should be no more than ~4 Hz. For longer reverb\n"
-                "  tails this gets impractical with WTSynth - use Farina IR instead.\n\n"
+                "  The impulse period (1 / Periodic Rate) must be longer than the IR\n"
+                "  Window. If the window is longer than the period, successive impulse\n"
+                "  responses overlap and the average becomes garbage.\n\n"
+                "  Rule of thumb: impulse period > IR window. For a 250 ms window, set\n"
+                "  WTGenerator's Periodic Rate no higher than ~4 Hz. For long reverb\n"
+                "  tails this gets impractical - use Farina IR or MLS IR instead.\n\n"
                 "Controls\n"
                 "  Window: capture length in milliseconds, 50 ms to 120 s. Set to cover\n"
                 "          the device's tail length.\n"
@@ -672,23 +660,14 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
                 "  response; everything after is the tail / ringing / reverb.\n\n"
                 "Tips\n"
                 "  - For short-tail effects (EQs, simple distortions), a 20-30 ms window\n"
-                "    works at most playback pitches.\n"
-                "  - For long-tail reverbs, set the window high and the playback pitch\n"
-                "    very low (or switch to Farina IR which doesn't have this problem).\n\n"
-                "2D Sweep Capture\n"
-                "  Not yet implemented for this mode.\n\n"
-                "  Visual style when added: waterfall plot (smooth, continuous X =\n"
-                "  time within the IR in ms, Y = sweep position 0..1, colour =\n"
-                "  signed IR amplitude). Colourmap is bipolar around zero since IR\n"
-                "  samples swing both positive and negative: deep blue at -1.0\n"
-                "  (large negative peak) -> black at 0 (silence) -> warm red at\n"
-                "  +1.0 (large positive peak). The Y axis runs bottom = position 0\n"
-                "  to top = position 1, so each horizontal stripe is one position's\n"
-                "  full IR.\n\n"
-                "  Typical use will be: route DAW automation to both a source-side\n"
-                "  parameter and WTAnalyzer's Sweep Position, then watch the IR\n"
-                "  morph across the sweep - useful for time-varying effects\n"
-                "  (modulation, dynamics with input-dependent behaviour, etc.).\n\n"
+                "    works at most impulse rates.\n"
+                "  - For long-tail reverbs, set the window high and the Periodic Rate\n"
+                "    very low (or switch to Farina IR or MLS IR, which have no such\n"
+                "    constraint).\n\n"
+                "Sweep Capture\n"
+                "  Not available in this mode - sweep capture is for the\n"
+                "  per-frequency modes (Frequency Response, Aliasing, Phase).\n"
+                "  Use the CSD views below for this IR's time-frequency picture.\n\n"
                 "CSD views\n"
                 "  The Waveform / Heatmap / 3D selector above the plot switches\n"
                 "  between the time-domain IR and its Cumulative Spectral Decay.\n"
@@ -733,14 +712,12 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
                 "    so SNR is enormous without needing to average.\n"
                 "  - The sweep distributes excitation across the entire spectrum, so the\n"
                 "    device is properly tested at every frequency.\n"
-                "  - The wavetable model can't deliver clean discrete impulses, but it\n"
-                "    can deliver clean log sweeps. For WTSynth-driven testing this is\n"
-                "    the practical IR measurement path.\n\n"
+                "  - A swept stimulus needs no impulse-rate-versus-window juggling, so\n"
+                "    it is the most practical IR path for long-tailed devices.\n\n"
                 "Input\n"
-                "  A log sine sweep from f0 to f1 over the configured duration. The\n"
-                "  chirp.py script in the scripts folder produces these as WTSynth\n"
-                "  wavetables - set Type=Log (Farina), Start and End to match your\n"
-                "  intended f0 / f1.\n\n"
+                "  A log sine sweep from f0 to f1 over the configured duration.\n"
+                "  WTGenerator's Chirp generator produces exactly this; set its Start,\n"
+                "  End and Duration to match the f0 / f1 / Sweep values here.\n\n"
                 "  CRITICAL: the parameters configured in the Farina panel must match\n"
                 "  the parameters of the actual sweep you play. The deconvolution math\n"
                 "  uses these values to construct the inverse filter; mismatched\n"
@@ -784,19 +761,12 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
                 "  - The IR plot's Y axis auto-scales to peak; for short-tailed effects\n"
                 "    the peak at t=0 dominates and the tail looks small; zoom or use\n"
                 "    Clear + adjust parameters if you want to see the tail in detail.\n\n"
-                "2D Sweep Capture\n"
-                "  Not yet implemented for this mode. The Capture / Clear buttons\n"
-                "  in the header here trigger the Farina deconvolution itself - they\n"
-                "  are NOT the 2D sweep capture controls (those are FR-only today).\n\n"
-                "  Visual style when added: waterfall plot, identical to Direct\n"
-                "  Impulse IR's planned 2D view. Smooth heatmap with X = time\n"
-                "  within the IR (ms), Y = sweep position 0..1, colour = signed IR\n"
-                "  amplitude (bipolar: blue for large negatives, black at zero,\n"
-                "  red for large positives). Each horizontal stripe is one\n"
-                "  position's full IR.\n\n"
-                "  You'd run multiple Farina captures across automated source-side\n"
-                "  parameter values to map how the IR shape changes with signal\n"
-                "  character.\n\n"
+                "Sweep Capture\n"
+                "  Not available in this mode. The header Capture / Clear here arm\n"
+                "  the Farina deconvolution itself - they are not the sweep-capture\n"
+                "  controls (sweep capture is for Frequency Response, Aliasing and\n"
+                "  Phase). Use the CSD views below for this IR's time-frequency\n"
+                "  picture.\n\n"
                 "CSD views\n"
                 "  The Waveform / Heatmap / 3D selector above the plot switches\n"
                 "  between the time-domain IR and its Cumulative Spectral Decay.\n"
@@ -836,7 +806,7 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
                 "  the visualisation: Divergence, Correlation, and\n"
                 "  Goniometer - all shipped.\n\n"
                 "Input\n"
-                "  Any broadband signal - pink noise, a sweep, or wavetable content\n"
+                "  Any broadband signal - pink noise, a sweep, or a multisine\n"
                 "  that excites the spectrum. The richer the input's frequency\n"
                 "  coverage, the more of the divergence curve is measurable.\n\n"
                 "Divergence view\n"
@@ -891,69 +861,14 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
                 "      the stereo image of the signal the device ADDED, the\n"
                 "      time-domain analog of the Divergence view. A stereo-\n"
                 "      transparent device collapses this cloud to the origin.\n\n"
-                "2D Sweep Capture\n"
-                "  Not yet implemented for this mode. When added, the heatmap X\n"
-                "  axis would be log frequency, Y the sweep position, colour the\n"
-                "  signed divergence (bipolar - one channel's colour for each\n"
-                "  direction).\n\n"
+                "Sweep Capture\n"
+                "  Not available in this mode - sweep capture is for the\n"
+                "  per-frequency modes (Frequency Response, Aliasing, Phase).\n\n"
                 "Stereo (L / R / Diff)\n"
                 "  This entire mode IS the stereo analysis - every view is\n"
                 "  inherently a stereo comparison, so the shared L / R / Diff\n"
                 "  toggle row is hidden here. The panel's own selector picks the\n"
                 "  visualisation instead.\n";
-
-        case Mode::ParameterSweep:
-            return
-                "Parameter Sweep\n"
-                "===============\n\n"
-                "What it measures\n"
-                "  A headline metric versus a swept parameter - the Plugin\n"
-                "  Doctor style precision plot. Two header selectors: the\n"
-                "  metric (THD% or IMD%) and the view (Line or Heatmap).\n"
-                "  Line is a 1D X-Y curve - X the sweep position, Y the\n"
-                "  metric scalar. Heatmap shows the metric's full per-\n"
-                "  harmonic / per-product distribution: X the harmonic or\n"
-                "  product, Y the sweep position, colour the level.\n\n"
-                "Input\n"
-                "  THD% expects a clean sine; IMD% expects a two-tone signal -\n"
-                "  the same inputs those modes need. The device parameter you\n"
-                "  want on the X axis is swept by the source/host.\n\n"
-                "How to drive it\n"
-                "  Automate WTAnalyzer's Sweep Position parameter (0..1) from\n"
-                "  the DAW, and route the SAME automation to the parameter you\n"
-                "  want to characterise - the source plugin's WT Pos, an\n"
-                "  effect's drive or cutoff, etc. Arm Capture; the curve fills\n"
-                "  in as the automation plays. Capture records only while the\n"
-                "  transport is playing; Clear starts a fresh capture.\n"
-                "  Because X is just the 0..1 lane, 'THD% vs frequency' and\n"
-                "  'THD% vs drive' are the same capture - the difference is\n"
-                "  only what you routed the automation to.\n\n"
-                "Shaping the sweep\n"
-                "  Use a slow ramp - 40 to 60 seconds end to end. A fast\n"
-                "  sweep lands only about one measurement frame per bucket\n"
-                "  and the curve looks jagged; a slow ramp gives each bucket\n"
-                "  many frames to average into a clean curve.\n"
-                "  Hold the automation still for about a second at each end,\n"
-                "  before and after the ramp. Each measurement is a ~170 ms\n"
-                "  window average, so the minimum and maximum values read\n"
-                "  correctly only while the parameter sits still - the holds\n"
-                "  give the capture a settled signal at each extreme.\n\n"
-                "How to read it\n"
-                "  Line view: green (L) and lime (R) traces are the captured\n"
-                "  curve per channel; a faint vertical line marks the current\n"
-                "  sweep position with live dots; the Y axis auto-ranges in\n"
-                "  percent. Heatmap view: each column is one harmonic (THD)\n"
-                "  or product (IMD), each row a sweep position (0 at the\n"
-                "  bottom), colour the differential level - so you see which\n"
-                "  harmonics grow where across the sweep. The capture feeds\n"
-                "  both views at once, so the Line / Heatmap toggle switches\n"
-                "  freely with no re-capture.\n\n"
-                "  Switching the metric clears the capture - THD% and IMD%\n"
-                "  are different units.\n\n"
-                "Stereo (L / R / Diff)\n"
-                "  The Line view draws both channels. The Heatmap shows the\n"
-                "  L channel (a heatmap cannot overlay L and R). The shared\n"
-                "  L / R / Diff toggle row is hidden here.\n";
 
         case Mode::PhaseResponse:
             return
@@ -1001,10 +916,16 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
                 "  minimum-phase EQ shows phase swing around its corners and\n"
                 "  a group-delay bump there; an all-pass shows phase motion\n"
                 "  with no magnitude change in FR mode.\n\n"
-                "2D Sweep Capture\n"
-                "  Not yet implemented for this mode. When added, the heatmap\n"
-                "  X axis would be log frequency, Y the sweep position,\n"
-                "  colour the phase or group delay (bipolar).\n\n"
+                "Sweep Capture\n"
+                "  The detrended phase curve can be recorded across a swept\n"
+                "  parameter. Arm the header Capture button, then automate one\n"
+                "  DAW lane into both a WTGenerator parameter and WTAnalyzer's\n"
+                "  Sweep Position; the panel switches to the swept-result view.\n"
+                "  Clear wipes it; toggle Capture off to return to the live\n"
+                "  curve.\n\n"
+                "  Three views (Line / Heatmap / 3D): the captured per-position\n"
+                "  phase curves overlaid, a log-frequency x sweep-position\n"
+                "  colour map, or an orbitable 3D surface.\n\n"
                 "Stereo (L / R)\n"
                 "  The shared L / R toggles pick which channels draw, the\n"
                 "  same as the other 1D-trace modes; group delay auto-ranges\n"
@@ -1051,7 +972,7 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
                 "         continuously while the mode is active - there is no\n"
                 "         arm step - so Clear before re-running a ramp if you\n"
                 "         want a fresh trace. (in the panel header)\n\n"
-                "2D Sweep Capture\n"
+                "Sweep Capture\n"
                 "  Not applicable in this mode. Dynamics already IS a sweep -\n"
                 "  the input-level axis is its swept dimension - so there is\n"
                 "  no second parameter to bucket against. The Sweep Position\n"
@@ -1099,6 +1020,14 @@ juce::String WTAnalyzerAudioProcessorEditor::getModeHelpText (int modeIndex)
                 "Tail\n"
                 "  The displayed length of the IR. The recovered IR spans a full\n"
                 "  period; Tail trims the view to the portion carrying the response.\n\n"
+                "CSD views\n"
+                "  The Waveform / Heatmap / 3D selector above the plot switches\n"
+                "  between the time-domain IR and its Cumulative Spectral Decay -\n"
+                "  a sliding-window FFT of the IR showing how each frequency\n"
+                "  decays over time. Heatmap draws it as log-frequency X, time Y,\n"
+                "  colour = level; 3D is the receding waterfall of spectra. Drag\n"
+                "  to zoom / orbit, double-click to reset; the L / R toggle picks\n"
+                "  the channel.\n\n"
                 "Stereo (L / R / Diff)\n"
                 "  L and R are correlated independently. Diff overlays R - L.\n";
 
@@ -1141,6 +1070,16 @@ void WTAnalyzerAudioProcessorEditor::timerCallback()
     const int current = (int) *audioProcessor.apvts.getRawParameterValue ("activeAnalysis");
     if (current != lastAppliedAnalysisMode)
         applyAnalysisMode (current);
+
+    // The Capture toggle swaps the THD / IMD live bars for the swept-result
+    // view, so re-apply the layout whenever it changes.
+    const bool sweepActive = *audioProcessor.apvts.getRawParameterValue (
+                                  "sweepCaptureActive") > 0.5f;
+    if (sweepActive != lastSweepCaptureActive)
+    {
+        lastSweepCaptureActive = sweepActive;
+        applyAnalysisMode (lastAppliedAnalysisMode);
+    }
 
     updateImbalanceReadout();
 
@@ -1452,21 +1391,38 @@ void WTAnalyzerAudioProcessorEditor::applyAnalysisMode (int modeIndex)
     const bool wantsIrPath       = (modeIndex == (int) Mode::DirectImpulseIR);
     const bool wantsFarinaPath   = (modeIndex == (int) Mode::FarinaIR);
     const bool wantsStereoPath   = (modeIndex == (int) Mode::StereoImage);
-    const bool wantsSweepPath    = (modeIndex == (int) Mode::ParameterSweep);
     const bool wantsPhasePath    = (modeIndex == (int) Mode::PhaseResponse);
     const bool wantsDynamicsPath = (modeIndex == (int) Mode::Dynamics);
     const bool wantsMlsPath      = (modeIndex == (int) Mode::MlsIR);
     const bool wantsStepPath     = (modeIndex == (int) Mode::StepResponse);
 
-    spectrumDisplay  .setVisible (wantsSpectrumPath);
-    cursorReadout    .setVisible (wantsSpectrumPath);
-    thdDisplay       .setVisible (wantsThdPath);
-    imdDisplay       .setVisible (wantsImdPath);
+    // THD and IMD record their metric across the sweep axis in-mode: with
+    // Capture armed, the swept-result panel replaces the live bar chart.
+    const bool sweepActive      = *audioProcessor.apvts.getRawParameterValue (
+                                       "sweepCaptureActive") > 0.5f;
+    const bool wantsSweepResult = (wantsThdPath || wantsImdPath) && sweepActive;
+    // FR / Aliasing / Phase capture a per-frequency curve across the sweep
+    // axis; the shared SweepView panel replaces the live display when armed.
+    const bool wantsSweepGrid   = (wantsSpectrumPath || wantsPhasePath) && sweepActive;
+
+    spectrumDisplay  .setVisible (wantsSpectrumPath && ! sweepActive);
+    cursorReadout    .setVisible (wantsSpectrumPath && ! sweepActive);
+    thdDisplay       .setVisible (wantsThdPath && ! sweepActive);
+    imdDisplay       .setVisible (wantsImdPath && ! sweepActive);
     impulseDisplay   .setVisible (wantsIrPath);
     farinaDisplay    .setVisible (wantsFarinaPath);
     stereoDisplay    .setVisible (wantsStereoPath);
-    sweepCurveDisplay.setVisible (wantsSweepPath);
-    phaseDisplay     .setVisible (wantsPhasePath);
+    sweepCurveDisplay.setVisible (wantsSweepResult);
+    if (wantsSweepResult)
+        sweepCurveDisplay.setMetric (wantsImdPath);
+    sweepView        .setVisible (wantsSweepGrid);
+    if (wantsSweepGrid)
+    {
+        if      (modeIndex == (int) Mode::FrequencyResponse) sweepView.setValueRange (-60.0f,  12.0f, "dB");
+        else if (modeIndex == (int) Mode::AliasingDetection) sweepView.setValueRange (-120.0f,  0.0f, "dB");
+        else                                                 sweepView.setValueRange (-180.0f, 180.0f, "deg");
+    }
+    phaseDisplay     .setVisible (wantsPhasePath && ! sweepActive);
     dynamicsDisplay  .setVisible (wantsDynamicsPath);
     mlsDisplay         .setVisible (wantsMlsPath);
     stepResponseDisplay.setVisible (wantsStepPath);
@@ -1476,13 +1432,13 @@ void WTAnalyzerAudioProcessorEditor::applyAnalysisMode (int modeIndex)
     // is mode-driven from the editor.
     spectrumDisplay.setAliasingViewButtonsVisible (modeIndex == (int) Mode::AliasingDetection);
 
-    // Capture / Clear in the header swap between the sweep recorder and
-    // the Farina IR one-shot trigger based on the active mode. The sweep
-    // recorder pair serves both the FR 2D heatmap and the Parameter
-    // Sweep curve - same `sweepCaptureActive` arm gesture for both.
+    // Capture / Clear in the header. The sweep-recorder pair (the
+    // sweepCaptureActive arm gesture) serves Frequency Response's 2D
+    // heatmap and the in-mode THD / IMD sweep capture; Farina, MLS and
+    // Step have their own one-shot pairs sharing the same header slot.
     const bool isFarinaMode = (modeIndex == (int) Mode::FarinaIR);
-    const bool wantsSweepButtons = (modeIndex == (int) Mode::FrequencyResponse)
-                                 || wantsSweepPath;
+    const bool wantsSweepButtons = wantsSpectrumPath || wantsPhasePath
+                                 || wantsThdPath || wantsImdPath;
     sweepCaptureButton .setVisible (wantsSweepButtons);
     sweepClearButton   .setVisible (wantsSweepButtons);
     farinaCaptureButton.setVisible (isFarinaMode);
@@ -1551,6 +1507,7 @@ void WTAnalyzerAudioProcessorEditor::resized()
     farinaDisplay   .setUiScale (s);
     stereoDisplay   .setUiScale (s);
     sweepCurveDisplay.setUiScale (s);
+    sweepView        .setUiScale (s);
     phaseDisplay    .setUiScale (s);
     dynamicsDisplay .setUiScale (s);
     mlsDisplay         .setUiScale (s);
@@ -1632,6 +1589,7 @@ void WTAnalyzerAudioProcessorEditor::resized()
     farinaDisplay    .setBounds (bounds);
     stereoDisplay    .setBounds (bounds);
     sweepCurveDisplay.setBounds (bounds);
+    sweepView        .setBounds (bounds);
     phaseDisplay     .setBounds (bounds);
     dynamicsDisplay  .setBounds (bounds);
     mlsDisplay         .setBounds (bounds);

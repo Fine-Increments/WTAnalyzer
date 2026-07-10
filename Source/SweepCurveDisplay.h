@@ -2,11 +2,13 @@
   ==============================================================================
 
     SweepCurveDisplay.h
-    Mode-specific display for the Parameter Sweep analysis - a Plugin
-    Doctor style 1D X-Y plot.
+    The swept-result panel for THD and IMD modes - a Plugin Doctor style
+    plot of the headline metric across the sweep axis. Shown in place of
+    the live bar chart while Capture is armed.
 
-    Two header selectors: a metric (THD% / IMD%) and a view (Line /
-    Heatmap).
+    One header selector: the view (Line / Heatmap). The metric (THD% or
+    IMD%) follows the active analysis mode - the editor sets it via
+    setMetric().
 
       - Line: a 1D X-Y plot. X is the swept parameter (the `sweepPosition`
         APVTS lane, 0..1), Y is the headline metric scalar, drawn per
@@ -29,6 +31,7 @@
 
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
+#include "CSDIconButton.h"
 
 class SweepCurveDisplay  : public juce::Component,
                            private juce::Timer,
@@ -43,8 +46,17 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
-    void mouseMove (const juce::MouseEvent&) override;
-    void mouseExit (const juce::MouseEvent&) override;
+    // The metric (THD% / IMD%) is set by the editor from the active
+    // analysis mode - this display is shown inside both THD and IMD modes.
+    void setMetric (bool isImd) noexcept;
+
+    void mouseMove        (const juce::MouseEvent&) override;
+    void mouseExit        (const juce::MouseEvent&) override;
+    void mouseDown        (const juce::MouseEvent&) override;
+    void mouseDrag        (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
+    void mouseWheelMove   (const juce::MouseEvent&,
+                           const juce::MouseWheelDetails&) override;
 
 private:
     void timerCallback() override;
@@ -54,10 +66,17 @@ private:
     float sf (float v) const noexcept { return v * uiScale; }
 
     enum class Metric { THD, IMD };
-    enum class View   { Line, Heatmap };
+    enum class View   { Line, Heatmap, Surface };
     Metric currentMetric() const noexcept;
     View   currentView()   const noexcept;
     void   syncButtons();
+
+    // Shows / hides the 3D camera-control cluster with the Surface view.
+    void syncCameraButtons();
+
+    void resetCamera()                   noexcept;
+    void applyDolly (float factor)       noexcept;   // surface zoom in / out
+    void applyPan   (float dx, float dy) noexcept;   // surface lateral / vertical slide
 
     // Reads the live per-channel metric value from the active sub-analysis.
     // Returns SweepCurve::kNoData for a channel with no valid measurement.
@@ -65,9 +84,27 @@ private:
 
     void drawLine    (juce::Graphics& g, juce::Rectangle<int> area);
     void drawHeatmap (juce::Graphics& g, juce::Rectangle<int> area);
+    void drawSurface (juce::Graphics& g, juce::Rectangle<int> area);
 
     WTAnalyzerAudioProcessor& processor;
     float uiScale = 1.0f;
+
+    // Metric is THD when false, IMD when true - set by the editor from
+    // the active analysis mode (this panel serves both THD and IMD).
+    bool metricIsImd = false;
+
+    // 3D-surface orbit camera (radians / factor), used only by the
+    // Surface view; drag orbits, scroll dollies, double-click resets.
+    // camPanX / camPanY are a screen-space slide as a fraction of the plot.
+    float camAzimuth   = -0.6f;
+    float camElevation =  0.42f;
+    float camDolly     =  1.0f;
+    float camPanX      =  0.0f;
+    float camPanY      =  0.0f;
+    bool  dragging     = false;
+    juce::Point<float> dragStart;
+    float dragAz0 = 0.0f;
+    float dragEl0 = 0.0f;
 
     // Last mouse position over the panel and whether the pointer is
     // inside it. Drives the cursor readout strip below the plot.
@@ -78,10 +115,18 @@ private:
     // drawn in the strip below the plot.
     juce::String     hoverText;
 
-    juce::TextButton thdButton     { "THD%"    };
-    juce::TextButton imdButton     { "IMD%"    };
     juce::TextButton lineButton    { "Line"    };
     juce::TextButton heatmapButton { "Heatmap" };
+    juce::TextButton surfaceButton { "3D"      };
+
+    // Surface camera controls, shown only in the 3D view: two zoom
+    // buttons stacked, then a 4-way pan cross below them.
+    CSDIconButton zoomInButton   { CSDIconButton::Icon::ZoomIn  };
+    CSDIconButton zoomOutButton  { CSDIconButton::Icon::ZoomOut };
+    CSDIconButton panUpButton    { CSDIconButton::Icon::Up      };
+    CSDIconButton panDownButton  { CSDIconButton::Icon::Down    };
+    CSDIconButton panLeftButton  { CSDIconButton::Icon::Left    };
+    CSDIconButton panRightButton { CSDIconButton::Icon::Right   };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SweepCurveDisplay)
 };

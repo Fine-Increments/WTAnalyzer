@@ -2,9 +2,9 @@
   ==============================================================================
 
     SidecarReader.h
-    Reads the wavetable.json sidecar file emitted by our test-signal
-    scripts (PLANNING.md section 2.5). The sidecar captures the exact
-    parameter values used to generate the most recent wavetable, so
+    Reads the sidecar JSON emitted by WTGenerator alongside a generated
+    test signal (PLANNING.md section 2.5). The sidecar captures the exact
+    parameter values used to generate the most recent signal, so
     parameter-dependent analyses (Farina, multisine flatness, transfer
     function from noise, ...) can pull their configuration from the
     source-of-truth file rather than asking the user to re-enter values
@@ -35,7 +35,7 @@ struct ScriptContext
     juce::String scriptName;       // e.g., "chirp.py"
     juce::String analysisHint;     // e.g., "FarinaDeconvolution"
     juce::String generatedAt;      // ISO 8601 timestamp string
-    juce::File   sourceFile;       // the wavetable.json itself
+    juce::File   sourceFile;       // the sidecar JSON itself
 
     int          sampleRate     = 0;
     int          samplesPerFrame = 0;

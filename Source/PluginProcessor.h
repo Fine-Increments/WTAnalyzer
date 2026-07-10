@@ -188,9 +188,8 @@ public:
         MlsIR             = 6,
         StepResponse      = 7,
         StereoImage       = 8,
-        ParameterSweep    = 9,
-        PhaseResponse     = 10,
-        Dynamics          = 11
+        PhaseResponse     = 9,
+        Dynamics          = 10
     };
 
     // First analysis: derived from the existing pre/post spectrum FFT.
@@ -219,9 +218,9 @@ public:
     ImpulseResponse impulseResponse;
 
     // Sixth analysis: time-domain impulse response via Farina log-sweep
-    // deconvolution. Same output (IR plot) as DirectImpulseIR but
-    // acquired from a log sine sweep, which WTSynth can deliver
-    // cleanly where discrete impulses can't.
+    // deconvolution. Same output (IR plot) as DirectImpulseIR, acquired
+    // from a log sine sweep - the stimulus of choice where a single
+    // discrete impulse lacks the energy for a clean noise floor.
     FarinaIR farinaIR;
 
     // Seventh analysis: per-frequency stereo divergence (R - L level
@@ -240,7 +239,7 @@ public:
     // mode of its own: when active (`sweepCaptureActive` APVTS bool),
     // analyses that participate (FR for v1) record their per-frame
     // output bucketed by the current `sweepPosition` APVTS value
-    // (DAW-automated, typically alongside WTSynth's WT Pos).
+    // (DAW-automated, alongside whatever WTGenerator parameter is swept).
     SweepCapture sweepCapture;
 
     // 1D parameter-sweep curve. Drives the Parameter Sweep mode: while
@@ -317,6 +316,13 @@ private:
 
     void runSpectrumFft();
 
+    // Records one sweep frame - the headline metric value plus its
+    // per-column row - into SweepCurve / SweepGrid, bucketed by
+    // sweepPosition, while Capture is armed. Shared by THD and IMD modes,
+    // which each record their own metric in-mode. Audio thread.
+    void recordSweepFrame (float valueL, float valueR,
+                           const float* rowL, const float* rowR, int numCols);
+
     juce::dsp::FFT spectrumFft { kSpectrumFftOrder };
     juce::dsp::WindowingFunction<float> spectrumWindow {
         (size_t) kSpectrumFftSize,
@@ -343,12 +349,7 @@ private:
     // can reset the active analysis state on mode change. Audio-thread only.
     int lastActiveAnalysisIndex = 0;
 
-    // Tracks the sweepMetric parameter so the parameter-sweep curve is
-    // cleared when the user switches metric (THD% and IMD% are different
-    // units - a mixed curve would be meaningless). Audio-thread only.
-    int lastSweepMetric = 0;
-
-    // Parameter Sweep capture state (audio-thread only). A short warm-up
+    // Sweep capture state (audio-thread only). A short warm-up
     // skips the transient at the start of every sweep pass so it cannot
     // land in a bucket and hijack the display's Y auto-range. A pass
     // boundary is any of: arming capture, the transport starting, or the

@@ -431,18 +431,6 @@ void SpectrumDisplay::paint (juce::Graphics& g)
         return (float) plotArea.getY() + (1.0f - t) * (float) plotArea.getHeight();
     };
 
-    // FR-mode 2D sweep capture takes over the Y axis when active. Y goes
-    // 0..1 in sweep position (0 at the bottom of the plot, 1 at the top),
-    // replacing the dB axis entirely. The X axis stays as log frequency.
-    const int  activeAnalysisIdxEarly = (int) *processor.apvts.getRawParameterValue ("activeAnalysis");
-    const bool sweepHeatmapMode = (activeAnalysisIdxEarly == (int) WTAnalyzerAudioProcessor::AnalysisMode::FrequencyResponse)
-                              && (*processor.apvts.getRawParameterValue ("sweepCaptureActive") > 0.5f);
-
-    auto posToY = [&] (float pos) -> float
-    {
-        return (float) plotArea.getBottom() - pos * (float) plotArea.getHeight();
-    };
-
     // Gridlines - skip any whose value is outside the current view.
     g.setColour (juce::Colour (0xff2a2d32));
 
@@ -452,26 +440,13 @@ void SpectrumDisplay::paint (juce::Graphics& g)
         g.drawLine (x, (float) plotArea.getY(), x, (float) plotArea.getBottom(), sf (1.0f));
     }
 
-    if (! sweepHeatmapMode)
+    // dB gridlines at the dynamic tick step, spanning the view range.
+    for (float db = std::ceil (viewMinDb / dbTickStep) * dbTickStep;
+         db <= viewMaxDb + dbTickStep * 0.001f;
+         db += dbTickStep)
     {
-        // dB gridlines at the dynamic tick step, spanning the view range.
-        for (float db = std::ceil (viewMinDb / dbTickStep) * dbTickStep;
-             db <= viewMaxDb + dbTickStep * 0.001f;
-             db += dbTickStep)
-        {
-            const float y = dbToY (db);
-            g.drawLine ((float) plotArea.getX(), y, (float) plotArea.getRight(), y, sf (1.0f));
-        }
-    }
-    else
-    {
-        // Sweep-position gridlines: quarter-divisions of the 0..1 range.
-        const std::array<float, 5> kPosGrid { 0.0f, 0.25f, 0.5f, 0.75f, 1.0f };
-        for (float pos : kPosGrid)
-        {
-            const float y = posToY (pos);
-            g.drawLine ((float) plotArea.getX(), y, (float) plotArea.getRight(), y, sf (1.0f));
-        }
+        const float y = dbToY (db);
+        g.drawLine ((float) plotArea.getX(), y, (float) plotArea.getRight(), y, sf (1.0f));
     }
 
     // Axis labels.
@@ -489,44 +464,23 @@ void SpectrumDisplay::paint (juce::Graphics& g)
         g.drawText (formatHz (f), r, juce::Justification::centredTop, false);
     }
 
-    if (! sweepHeatmapMode)
+    // dB labels at the dynamic tick step, matching the gridlines.
+    for (float db = std::ceil (viewMinDb / dbTickStep) * dbTickStep;
+         db <= viewMaxDb + dbTickStep * 0.001f;
+         db += dbTickStep)
     {
-        // dB labels at the dynamic tick step, matching the gridlines.
-        for (float db = std::ceil (viewMinDb / dbTickStep) * dbTickStep;
-             db <= viewMaxDb + dbTickStep * 0.001f;
-             db += dbTickStep)
-        {
-            const float y = dbToY (db);
-            const int textHeight = sx (12);
-            juce::Rectangle<int> r (labelGutterLeft.getX(),
-                                    (int) y - textHeight / 2,
-                                    labelGutterLeft.getWidth() - sx (11),
-                                    textHeight);
-            juce::String txt;
-            if (std::abs (db) < dbTickStep * 0.5f)
-                txt = "0";
-            else
-                txt = (db > 0.0f ? "+" : "") + juce::String (db, dbTickDecimals);
-            g.drawText (txt, r, juce::Justification::centredRight, false);
-        }
-    }
-    else
-    {
-        struct PosLabel { float pos; const char* text; };
-        const std::array<PosLabel, 5> kPosLabels {{
-            { 1.0f,  "1.0"  }, { 0.75f, "0.75" }, { 0.5f, "0.5" },
-            { 0.25f, "0.25" }, { 0.0f,  "0.0"  }
-        }};
-        for (auto label : kPosLabels)
-        {
-            const float y = posToY (label.pos);
-            const int textHeight = sx (12);
-            juce::Rectangle<int> r (labelGutterLeft.getX(),
-                                    (int) y - textHeight / 2,
-                                    labelGutterLeft.getWidth() - sx (11),
-                                    textHeight);
-            g.drawText (label.text, r, juce::Justification::centredRight, false);
-        }
+        const float y = dbToY (db);
+        const int textHeight = sx (12);
+        juce::Rectangle<int> r (labelGutterLeft.getX(),
+                                (int) y - textHeight / 2,
+                                labelGutterLeft.getWidth() - sx (11),
+                                textHeight);
+        juce::String txt;
+        if (std::abs (db) < dbTickStep * 0.5f)
+            txt = "0";
+        else
+            txt = (db > 0.0f ? "+" : "") + juce::String (db, dbTickDecimals);
+        g.drawText (txt, r, juce::Justification::centredRight, false);
     }
 
     // Restrict trace drawing to the plot area so curves outside the visible
@@ -602,26 +556,7 @@ void SpectrumDisplay::paint (juce::Graphics& g)
                                   == (int) WTAnalyzerAudioProcessor::AnalysisMode::AliasingDetection;
         const int aliasView = inAliasingMode ? aliasingViewIndex() : 0;
 
-        // FR sweep-heatmap mode keeps its own L-only render path - the
-        // toggles don't apply here yet (heatmap diff is a future change).
-        if (sweepHeatmapMode)
-        {
-            const float binFreqScale = sr / (float) WTAnalyzerAudioProcessor::kSpectrumFftSize;
-            renderSweepHeatmap (g, plotArea,
-                                viewMinFreq, viewMaxFreq,
-                                viewMinDb,   viewMaxDb,
-                                binFreqScale);
-
-            // "You are here" indicator: a horizontal line at the
-            // current sweepPosition so the user can see where in the
-            // heatmap the next captured FR row will land.
-            const float currentPos = juce::jlimit (0.0f, 1.0f,
-                (float) *processor.apvts.getRawParameterValue ("sweepPosition"));
-            const float y = posToY (currentPos);
-            g.setColour (juce::Colours::whitesmoke.withAlpha (0.7f));
-            g.drawLine ((float) plotArea.getX(), y, (float) plotArea.getRight(), y, sf (1.2f));
-        }
-        else if (! inAliasingMode)
+        if (! inAliasingMode)
         {
             // Draw order: R first (underneath), L on top.
             // See feedback-stereo-lr-diff-convention memory.
@@ -647,11 +582,10 @@ void SpectrumDisplay::paint (juce::Graphics& g)
             if (showL) plotTrace (processor.postSpectrumDb,   WTColors::postEffect);
         }
 
-        // When FrequencyResponse mode is active and we are NOT in sweep
-        // heatmap mode, overlay the transfer-function trace per channel.
+        // When FrequencyResponse mode is active, overlay the
+        // transfer-function trace per channel.
         // Draw order: R first (underneath), L on top.
-        if (! sweepHeatmapMode
-            && activeAnalysisIdx == (int) WTAnalyzerAudioProcessor::AnalysisMode::FrequencyResponse)
+        if (activeAnalysisIdx == (int) WTAnalyzerAudioProcessor::AnalysisMode::FrequencyResponse)
         {
             const float binFreqScale = sr / (float) WTAnalyzerAudioProcessor::kSpectrumFftSize;
 
@@ -788,90 +722,4 @@ void SpectrumDisplay::paint (juce::Graphics& g)
     }
 }
 
-void SpectrumDisplay::renderSweepHeatmap (juce::Graphics& g,
-                                          juce::Rectangle<int> plotArea,
-                                          float viewMinFreqLocal,
-                                          float viewMaxFreqLocal,
-                                          float viewMinDbLocal,
-                                          float viewMaxDbLocal,
-                                          float binFreqScale)
-{
-    const int W = plotArea.getWidth();
-    const int H = plotArea.getHeight();
-    if (W <= 0 || H <= 0) return;
-
-    juce::ignoreUnused (viewMinDbLocal, viewMaxDbLocal);   // colour mapping uses fixed dB anchors
-
-    const float logMin = std::log10 (viewMinFreqLocal);
-    const float logMax = std::log10 (viewMaxFreqLocal);
-    const float logRange = logMax - logMin;
-
-    const int numBuckets = processor.sweepCapture.getNumBuckets();
-    const int numBins    = processor.sweepCapture.getNumBins();
-
-    // Heatmap orientation:
-    //   X (width)  = log frequency        - matches the existing spectrum X axis
-    //   Y (height) = sweep position 0..1  - top = 1, bottom = 0 so increasing
-    //                                       position reads upward like increasing
-    //                                       dB does in the normal spectrum view.
-    //   colour     = FR response dB at that (freq, position) cell.
-
-    constexpr float kBottomDb = -60.0f;
-    constexpr float kTopDb    =  12.0f;
-    const juce::Colour belowFloor   = juce::Colour (0xff181a1d);
-    const juce::Colour atFloor      = juce::Colour (0xff000000);
-    const juce::Colour atUnity      = WTColors::analysis;
-    const juce::Colour atTop        = juce::Colour (0xffe85a4a);
-
-    auto dbToColour = [&] (float db) -> juce::Colour
-    {
-        if (db <= SweepCapture::kNoDataDb + 1.0f) return belowFloor;
-        if (db < kBottomDb) return atFloor;
-        if (db < 0.0f)
-        {
-            const float t = (db - kBottomDb) / (0.0f - kBottomDb);
-            return atFloor.interpolatedWith (atUnity, juce::jlimit (0.0f, 1.0f, t));
-        }
-        if (db < kTopDb)
-        {
-            const float t = db / kTopDb;
-            return atUnity.interpolatedWith (atTop, juce::jlimit (0.0f, 1.0f, t));
-        }
-        return atTop;
-    };
-
-    juce::Image image (juce::Image::RGB, W, H, false);
-    juce::Image::BitmapData bitmap (image, juce::Image::BitmapData::writeOnly);
-
-    // Precompute per-column freq->bin lookup (log frequency mapping).
-    std::vector<int> colBin ((size_t) W, 0);
-    for (int px = 0; px < W; ++px)
-    {
-        const float xNorm = (float) px / (float) std::max (1, W - 1);
-        const float logF  = logMin + xNorm * logRange;
-        const float freq  = std::pow (10.0f, logF);
-        colBin[(size_t) px] = juce::jlimit (0, numBins - 1,
-                                            (int) (freq / binFreqScale + 0.5f));
-    }
-
-    for (int py = 0; py < H; ++py)
-    {
-        // py 0 = top of plot = sweep position 1; py H-1 = bottom = position 0.
-        const float yNorm  = 1.0f - (float) py / (float) std::max (1, H - 1);
-        const int   bucket = juce::jlimit (0, numBuckets - 1,
-                                           (int) (yNorm * (float) (numBuckets - 1) + 0.5f));
-        auto* row = bitmap.getLinePointer (py);
-
-        for (int px = 0; px < W; ++px)
-        {
-            const int   bin = colBin[(size_t) px];
-            const float db  = processor.sweepCapture.getValue (bucket, bin);
-            const auto  col = dbToColour (db);
-            row[px * (int) bitmap.pixelStride + 0] = col.getBlue();
-            row[px * (int) bitmap.pixelStride + 1] = col.getGreen();
-            row[px * (int) bitmap.pixelStride + 2] = col.getRed();
-        }
-    }
-
-    g.drawImageAt (image, plotArea.getX(), plotArea.getY());
-}
+// (FR sweep capture now renders through the shared SweepView panel.)

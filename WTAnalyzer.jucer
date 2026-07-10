@@ -3,7 +3,7 @@
 <JUCERPROJECT id="khU8jD" name="WTAnalyzer" projectType="audioplug" useAppConfig="0"
               addUsingNamespaceToJuceHeader="0" jucerFormatVersion="1" companyName="Fine Increments"
               bundleIdentifier="com.FineIncrements.WTAnalyzer" companyCopyright="Copyright 2026 Fine Increments"
-              pluginDesc="Diagnostic analyzer for WTSynth-driven effect testing"
+              pluginDesc="Diagnostic analyzer for WTGenerator-driven effect testing"
               pluginName="WTAnalyzer" pluginManufacturer="Fine Increments"
               pluginManufacturerCode="Fine" pluginCode="Anlz" pluginVST3Category="Analyzer,Fx"
               cppLanguageStandard="20" pluginFormats="buildAU,buildVST3" pluginVSTCategory="kPlugCategEffect">
@@ -57,6 +57,10 @@
             file="Source/SweepCurveDisplay.cpp"/>
       <FILE id="SwCv02" name="SweepCurveDisplay.h" compile="0" resource="0"
             file="Source/SweepCurveDisplay.h"/>
+      <FILE id="SwVw01" name="SweepView.cpp" compile="1" resource="0"
+            file="Source/SweepView.cpp"/>
+      <FILE id="SwVw02" name="SweepView.h" compile="0" resource="0"
+            file="Source/SweepView.h"/>
       <FILE id="PhDp01" name="PhaseDisplay.cpp" compile="1" resource="0"
             file="Source/PhaseDisplay.cpp"/>
       <FILE id="PhDp02" name="PhaseDisplay.h" compile="0" resource="0"
@@ -69,6 +73,8 @@
             file="Source/CSDView.cpp"/>
       <FILE id="CSDv02" name="CSDView.h" compile="0" resource="0"
             file="Source/CSDView.h"/>
+      <FILE id="CSIb01" name="CSDIconButton.h" compile="0" resource="0"
+            file="Source/CSDIconButton.h"/>
       <FILE id="Side01" name="SidecarReader.cpp" compile="1" resource="0"
             file="Source/SidecarReader.cpp"/>
       <FILE id="Side02" name="SidecarReader.h" compile="0" resource="0"

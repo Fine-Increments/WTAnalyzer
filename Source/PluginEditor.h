@@ -21,6 +21,7 @@
 #include "FarinaDisplay.h"
 #include "StereoDisplay.h"
 #include "SweepCurveDisplay.h"
+#include "SweepView.h"
 #include "PhaseDisplay.h"
 #include "DynamicsDisplay.h"
 #include "MlsDisplay.h"
@@ -211,8 +212,13 @@ private:
     // Stereo Image display path - per-frequency stereo divergence.
     StereoDisplay    stereoDisplay;
 
-    // Parameter Sweep display path - Plugin Doctor style 1D X-Y curve.
+    // Swept-result panel for THD / IMD modes - the metric across the sweep
+    // as a Line curve, Heatmap, or 3D surface.
     SweepCurveDisplay sweepCurveDisplay;
+
+    // Swept-result panel for FR / Aliasing / Phase modes - the captured
+    // per-frequency curve across the sweep, as Line / Heatmap / 3D.
+    SweepView sweepView;
 
     // Phase Response display path - phase + group delay over log frequency.
     PhaseDisplay     phaseDisplay;
@@ -234,7 +240,8 @@ private:
     LevelMetersPanel levelMetersPanel;
     LatencyPanel     latencyPanel;
 
-    int lastAppliedAnalysisMode = -1;   // forces an initial visibility update
+    int  lastAppliedAnalysisMode = -1;   // forces an initial visibility update
+    bool lastSweepCaptureActive  = false;  // re-applies layout on Capture toggle
 
     juce::ComboBox analysisSelector;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> analysisAttachment;

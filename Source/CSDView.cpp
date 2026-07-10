@@ -365,56 +365,88 @@ void CSDView::renderWaterfall (int channel)
     auto area = getLocalBounds().reduced (sx (8));
     if (area.getWidth() <= 0 || area.getHeight() <= 0) return;
 
-    const float cx = (float) area.getCentreX();
-    const float cy = (float) area.getCentreY();
-
-    // Anamorphic scale: X fills the width, Y the height, so the box
-    // spreads across the whole plot rather than sitting as a small
-    // centred cube. Rotation still happens in uniform model space; only
-    // the final 2D mapping is stretched to the (wide) viewport.
-    const float scaleX = (float) area.getWidth()  * 0.40f * camDolly;
-    const float scaleY = (float) area.getHeight() * 0.40f * camDolly;
-    const float panX   = camPanX * (float) area.getWidth();
-    const float panY   = camPanY * (float) area.getHeight();
+    // Model box half-extents. Frequency is the long axis - a log
+    // spectrum, read left to right - while level and time are shallower.
+    // The non-uniform shape lives in MODEL space, before the rotation,
+    // so the orbit stays rigid (a non-uniform scale applied after the
+    // rotation is what shears a 3D view).
+    constexpr float hx = 1.62f;   // frequency  (log Hz)
+    constexpr float hy = 0.52f;   // level      (dB)
+    constexpr float hz = 0.74f;   // time
 
     const float cosA = std::cos (camAzimuth),   sinA = std::sin (camAzimuth);
     const float cosE = std::cos (camElevation), sinE = std::sin (camElevation);
 
-    struct P { float x, y, depth; };
-    auto project = [&] (float mx, float my, float mz) -> P
+    // Rotation only, no screen mapping. depth is the painter's-algorithm key.
+    struct R { float x, y, depth; };
+    auto rotate = [&] (float mx, float my, float mz) -> R
     {
         const float x1 =  mx * cosA + mz * sinA;
         const float z1 = -mx * sinA + mz * cosA;
         const float y2 =  my * cosE - z1 * sinE;
         const float z2 =  my * sinE + z1 * cosE;
-        return { cx + x1 * scaleX + panX, cy - y2 * scaleY + panY, z2 };
+        return { x1, y2, z2 };
+    };
+
+    // Fit-to-view: rotate a label-margin envelope of the box, measure
+    // its screen spread, and take the largest uniform scale that still
+    // fits the plot. Recomputed each render so the box fills the space
+    // at every orbit angle; camDolly is the user's zoom on top.
+    float maxAbsX = 1.0e-3f, maxAbsY = 1.0e-3f;
+    for (int i = 0; i < 8; ++i)
+    {
+        const R c = rotate ((i & 1)        ? hx * 1.22f : -hx * 1.22f,
+                            ((i >> 1) & 1) ? hy * 1.30f : -hy * 1.30f,
+                            ((i >> 2) & 1) ? hz * 1.30f : -hz * 1.30f);
+        maxAbsX = juce::jmax (maxAbsX, std::abs (c.x));
+        maxAbsY = juce::jmax (maxAbsY, std::abs (c.y));
+    }
+    const float fitW  = juce::jmax (1.0f, (float) area.getWidth()  - sf (48.0f));
+    const float fitH  = juce::jmax (1.0f, (float) area.getHeight() - sf (40.0f));
+    const float scale = juce::jmin (fitW / (2.0f * maxAbsX),
+                                    fitH / (2.0f * maxAbsY)) * camDolly;
+
+    const float cx = (float) area.getCentreX() + camPanX * (float) area.getWidth();
+    const float cy = (float) area.getCentreY() + camPanY * (float) area.getHeight();
+
+    struct P { float x, y, depth; };
+    auto project = [&] (float mx, float my, float mz) -> P
+    {
+        const R r = rotate (mx, my, mz);
+        return { cx + r.x * scale, cy - r.y * scale, r.depth };
     };
 
     juce::Graphics g (cachedImage);
 
     // The freq axis spans the ACTUAL bin range (bin 1 up), not a nominal
-    // 20 Hz - otherwise the cube and axes anchor to an empty sub-bin-1
+    // 20 Hz - otherwise the box and axes anchor to an empty sub-bin-1
     // strip and float off the left edge of the real data.
     const float binHz1   = csd.getSampleRate() / (float) CSD::kSliceFftSize;
     const float loHz     = juce::jmax (kViewMinHz, binHz1);
     const float maxHz    = juce::jmax (loHz * 2.0f, csd.getMaxHz());
     const float logMin   = std::log10 (loHz);
     const float logMax   = std::log10 (maxHz);
-    const float logRange = logMax - logMin;
+    const float logRange = juce::jmax (1.0e-4f, logMax - logMin);
     const int   nSlices  = csd.getNumSlices();
 
-    auto freqToMx = [&] (float hz)
+    auto freqToMx = [&] (float hzv) -> float
     {
-        return juce::jlimit (0.0f, 1.0f, (std::log10 (hz) - logMin) / logRange) - 0.5f;
+        return (juce::jlimit (0.0f, 1.0f, (std::log10 (hzv) - logMin) / logRange) - 0.5f)
+                   * 2.0f * hx;
     };
+    auto lvlToMy  = [&] (float n) -> float
+    {
+        return (juce::jlimit (0.0f, 1.0f, n) - 0.5f) * 2.0f * hy;
+    };
+    auto timeToMz = [&] (float t) -> float { return (0.5f - t) * 2.0f * hz; };
 
-    // ---- Orientation wireframe cube ------------------------------------
+    // ---- Orientation wireframe box -------------------------------------
     g.setColour (juce::Colour (0xff242730));
     std::array<P, 8> corner;
     for (int i = 0; i < 8; ++i)
-        corner[(size_t) i] = project ((i & 1)        ? 0.5f : -0.5f,
-                                      ((i >> 1) & 1) ? 0.5f : -0.5f,
-                                      ((i >> 2) & 1) ? 0.5f : -0.5f);
+        corner[(size_t) i] = project ((i & 1)        ? hx : -hx,
+                                      ((i >> 1) & 1) ? hy : -hy,
+                                      ((i >> 2) & 1) ? hz : -hz);
     for (int a = 0; a < 8; ++a)
         for (int b = a + 1; b < 8; ++b)
         {
@@ -430,7 +462,7 @@ void CSDView::renderWaterfall (int channel)
     for (int s = 0; s < nSlices; ++s)
     {
         const float tz = nSlices > 1 ? (float) s / (float) (nSlices - 1) : 0.0f;
-        order.emplace_back (project (0.0f, 0.0f, 0.5f - tz).depth, s);
+        order.emplace_back (project (0.0f, 0.0f, timeToMz (tz)).depth, s);
     }
     std::sort (order.begin(), order.end(),
                [] (auto& l, auto& r) { return l.first < r.first; });
@@ -443,7 +475,7 @@ void CSDView::renderWaterfall (int channel)
     {
         const int   s  = entry.second;
         const float tz = nSlices > 1 ? (float) s / (float) (nSlices - 1) : 0.0f;
-        const float mz = 0.5f - tz;   // t = 0 at the front (+mz) edge
+        const float mz = timeToMz (tz);   // t = 0 at the front (+mz) edge
 
         juce::Path top, filled;
         bool open = false;
@@ -451,16 +483,16 @@ void CSDView::renderWaterfall (int channel)
 
         for (int bin = 1; bin < CSD::kNumBins; ++bin)
         {
-            const float hz = (float) bin * binHz1;
-            if (hz < loHz)  continue;
-            if (hz > maxHz) break;
+            const float hzv = (float) bin * binHz1;
+            if (hzv < loHz)  continue;
+            if (hzv > maxHz) break;
 
-            const float mx = freqToMx (hz);
+            const float mx = freqToMx (hzv);
             const float lv = juce::jlimit (0.0f, 1.0f,
                 (csd.getValue (channel, s, bin) - CSD::kFloorDb) / (-CSD::kFloorDb));
 
-            const P pt   = project (mx, lv - 0.5f, mz);
-            const P base = project (mx,    -0.5f,  mz);
+            const P pt   = project (mx, lvlToMy (lv), mz);
+            const P base = project (mx, -hy,          mz);
 
             if (! open) { top.startNewSubPath (pt.x, pt.y); open = true; }
             else        { top.lineTo          (pt.x, pt.y); }
@@ -480,24 +512,23 @@ void CSDView::renderWaterfall (int channel)
         g.strokePath (top, juce::PathStrokeType (sf (1.2f)));
     }
 
-    // ---- Axes: ticks + labels along two bottom edges -------------------
-    // Drawn after the slices so they read on top; anchored to cube edges
+    // ---- Axes: ticks + labels along the box edges ----------------------
+    // Drawn after the slices so they read on top; anchored to box edges
     // so they rotate with the view.
-    auto label3D = [&] (const juce::String& txt, P at, float dx, float dy)
+    auto label3D = [&] (const juce::String& txt, P at)
     {
         g.drawText (txt,
-                    juce::Rectangle<float> (at.x - sf (18.0f) + dx, at.y - sf (6.0f) + dy,
-                                            sf (36.0f), sf (12.0f)).toNearestInt(),
+                    juce::Rectangle<float> (at.x - sf (20.0f), at.y - sf (6.0f),
+                                            sf (40.0f), sf (12.0f)).toNearestInt(),
                     juce::Justification::centred, false);
     };
 
     g.setFont (juce::FontOptions (sf (10.0f)));
 
-    // Frequency axis: front-bottom edge at my = -0.5, mz = +0.5 (the
-    // t = 0 edge, nearest the viewer at the default camera), along mx.
+    // Frequency axis: front-bottom edge (my = -hy, mz = +hz), along mx.
     {
-        const P e0 = project (-0.5f, -0.5f, 0.5f);
-        const P e1 = project ( 0.5f, -0.5f, 0.5f);
+        const P e0 = project (-hx, -hy, hz);
+        const P e1 = project ( hx, -hy, hz);
         g.setColour (juce::Colour (0xff3a3e46));
         g.drawLine (e0.x, e0.y, e1.x, e1.y, sf (1.2f));
 
@@ -507,18 +538,18 @@ void CSDView::renderWaterfall (int channel)
         for (float f : freqTicks)
         {
             const float mx  = freqToMx (f);
-            const P on  = project (mx, -0.5f, 0.5f);
-            const P end = project (mx, -0.5f, 0.55f);
+            const P on  = project (mx, -hy, hz);
+            const P end = project (mx, -hy, hz * 1.07f);
             g.drawLine (on.x, on.y, end.x, end.y, sf (1.0f));
-            label3D (formatHz (f), project (mx, -0.5f, 0.63f), 0.0f, 0.0f);
+            label3D (formatHz (f), project (mx, -hy, hz * 1.22f));
         }
-        label3D ("Hz", project (0.57f, -0.5f, 0.5f), 0.0f, 0.0f);
+        label3D ("Hz", project (hx, -hy, hz * 1.40f));
     }
 
-    // Time axis: bottom edge at my = mx = -0.5, running along mz.
+    // Time axis: left-bottom edge (mx = -hx, my = -hy), along mz.
     {
-        const P e0 = project (-0.5f, -0.5f, -0.5f);
-        const P e1 = project (-0.5f, -0.5f,  0.5f);
+        const P e0 = project (-hx, -hy, -hz);
+        const P e1 = project (-hx, -hy,  hz);
         g.setColour (juce::Colour (0xff3a3e46));
         g.drawLine (e0.x, e0.y, e1.x, e1.y, sf (1.2f));
 
@@ -526,14 +557,34 @@ void CSDView::renderWaterfall (int channel)
         for (int i = 0; i <= 4; ++i)
         {
             const float tf = (float) i / 4.0f;
-            const float mz = 0.5f - tf;   // t = 0 at the front (+mz) edge
-            const P on  = project (-0.5f,  -0.5f, mz);
-            const P end = project (-0.55f, -0.5f, mz);
+            const float mz = timeToMz (tf);   // t = 0 at the front (+mz) edge
+            const P on  = project (-hx,         -hy, mz);
+            const P end = project (-hx * 1.05f, -hy, mz);
             g.drawLine (on.x, on.y, end.x, end.y, sf (1.0f));
-            label3D (formatMs (tf * csd.getSpanMs()),
-                     project (-0.66f, -0.5f, mz), 0.0f, 0.0f);
+            label3D (formatMs (tf * csd.getSpanMs()), project (-hx * 1.16f, -hy, mz));
         }
-        label3D ("s", project (-0.5f, -0.5f, 0.57f), 0.0f, 0.0f);
+        label3D ("s", project (-hx * 1.16f, -hy, hz * 1.34f));
+    }
+
+    // Level axis: front-right vertical edge (mx = +hx, mz = +hz), along my.
+    {
+        const P e0 = project (hx, -hy, hz);
+        const P e1 = project (hx,  hy, hz);
+        g.setColour (juce::Colour (0xff3a3e46));
+        g.drawLine (e0.x, e0.y, e1.x, e1.y, sf (1.2f));
+
+        g.setColour (juce::Colours::grey);
+        for (int i = 0; i <= 4; ++i)
+        {
+            const float n  = (float) i / 4.0f;
+            const float my = lvlToMy (n);
+            const P on  = project (hx,         my, hz);
+            const P end = project (hx * 1.05f, my, hz);
+            g.drawLine (on.x, on.y, end.x, end.y, sf (1.0f));
+            label3D (juce::String (juce::roundToInt (CSD::kFloorDb * (1.0f - n))),
+                     project (hx * 1.17f, my, hz));
+        }
+        label3D ("dB", project (hx * 1.17f, hy * 1.30f, hz));
     }
 }
 

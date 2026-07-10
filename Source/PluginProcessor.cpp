@@ -44,7 +44,7 @@ WTAnalyzerAudioProcessor::createParameterLayout()
         juce::StringArray { "Frequency Response", "THD Measurement",
                             "Aliasing Detection", "IMD Measurement", "Direct Impulse IR",
                             "Farina IR", "MLS IR", "Step Response", "Stereo Image",
-                            "Parameter Sweep", "Phase Response", "Dynamics" },
+                            "Phase Response", "Dynamics" },
         0));
 
     // Level meter mode: false = Peak (default, matches DAW meter behaviour),
@@ -180,10 +180,10 @@ WTAnalyzerAudioProcessor::createParameterLayout()
                                         StepResponse::kMaxWindowMs, 0.0f, 0.5f),
         StepResponse::kDefaultWindowMs));
 
-    // 2D sweep capture across signal-character / parameter axes.
+    // 2D sweep capture across a parameter axis.
     // sweepPosition is the DAW-automatable lane; the user routes the
-    // same automation to this AND to WTSynth's WT Pos (or whatever the
-    // source plugin's swept parameter is). When sweepCaptureActive is
+    // same automation to this AND to whatever parameter they are
+    // sweeping in WTGenerator. When sweepCaptureActive is
     // true, the FrequencyResponse analysis writes its per-bin output
     // into a 2D buffer bucketed by sweepPosition.
     layout.add (std::make_unique<juce::AudioParameterFloat> (
@@ -197,23 +197,14 @@ WTAnalyzerAudioProcessor::createParameterLayout()
         "Sweep Capture Active",
         false));
 
-    // Parameter Sweep mode: which headline metric is recorded as the
-    // 1D X-Y curve. Index order matches SweepCurveDisplay's metric
-    // selector. THD% and IMD% are differential percentages whose
-    // per-channel scalars the THD / IMD analyses already produce.
-    layout.add (std::make_unique<juce::AudioParameterChoice> (
-        juce::ParameterID { "sweepMetric", 1 },
-        "Sweep Metric",
-        juce::StringArray { "THD%", "IMD%" },
-        0));
-
-    // Parameter Sweep view: the 1D scalar line plot, or a heatmap of the
-    // metric's full per-harmonic / per-product distribution across the
-    // sweep. Index order matches SweepCurveDisplay's view selector.
+    // Sweep view: the 1D scalar line plot, or a heatmap of the metric's
+    // full per-harmonic / per-product distribution across the sweep.
+    // Index order matches SweepCurveDisplay's view selector. Used by the
+    // in-mode sweep capture in THD and IMD modes.
     layout.add (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { "sweepView", 1 },
         "Sweep View",
-        juce::StringArray { "Line", "Heatmap" },
+        juce::StringArray { "Line", "Heatmap", "3D" },
         0));
 
     // Phase Response mode sub-view selector: the detrended phase curve
@@ -382,7 +373,6 @@ void WTAnalyzerAudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
     sweepGrid   .reset();
 
     lastActiveAnalysisIndex = (int) *apvts.getRawParameterValue ("activeAnalysis");
-    lastSweepMetric          = (int) *apvts.getRawParameterValue ("sweepMetric");
     sweepCaptureWasArmed     = false;
     sweepTransportWasPlaying = false;
     sweepLastPosition        = 0.0f;
@@ -469,6 +459,11 @@ void WTAnalyzerAudioProcessor::runSpectrumFft()
         dynamicsCurve    .reset();
         mlsIR            .reset();
         stepResponse     .reset();
+        // A stale sweep from a previous mode would be meaningless - clear
+        // every sweep buffer on any mode change.
+        sweepCapture     .reset();
+        sweepCurve       .reset();
+        sweepGrid        .reset();
         lastActiveAnalysisIndex = activeIndex;
     }
 
@@ -490,132 +485,131 @@ void WTAnalyzerAudioProcessor::runSpectrumFft()
         }
     }
     else if (activeIndex == (int) AnalysisMode::THDMeasurement)
+    {
         thdMeasurement.update (preSpectrumDb  .data(), postSpectrumDb  .data(),
                                preSpectrumDb_R.data(), postSpectrumDb_R.data());
+
+        // In-mode sweep capture: while Capture is armed, bucket THD% and
+        // the per-harmonic differential row by sweepPosition.
+        const float vL = thdMeasurement.isValid (THDMeasurement::Channel::L)
+            ? thdMeasurement.getTotalThdPercent (THDMeasurement::Channel::L)
+            : SweepCurve::kNoData;
+        const float vR = thdMeasurement.isValid (THDMeasurement::Channel::R)
+            ? thdMeasurement.getTotalThdPercent (THDMeasurement::Channel::R)
+            : SweepCurve::kNoData;
+
+        // Harmonics 2..16 - the distortion harmonics (h1 is the fundamental).
+        float rowL[SweepGrid::kMaxCols];
+        float rowR[SweepGrid::kMaxCols];
+        constexpr int numCols = 15;
+        for (int c = 0; c < numCols; ++c)
+        {
+            rowL[c] = thdMeasurement.getHarmonicRatioDb (THDMeasurement::Source::Diff,
+                                                         c + 2, THDMeasurement::Channel::L);
+            rowR[c] = thdMeasurement.getHarmonicRatioDb (THDMeasurement::Source::Diff,
+                                                         c + 2, THDMeasurement::Channel::R);
+        }
+        recordSweepFrame (vL, vR, rowL, rowR, numCols);
+    }
     else if (activeIndex == (int) AnalysisMode::AliasingDetection)
+    {
         aliasingDetection.update (preSpectrumDb  .data(), postSpectrumDb  .data(),
                                   preSpectrumDb_R.data(), postSpectrumDb_R.data());
+
+        // In-mode sweep capture: bucket the off-grid added-energy curve
+        // by sweepPosition while Capture is armed.
+        if (*apvts.getRawParameterValue ("sweepCaptureActive") > 0.5f)
+            sweepCapture.captureFrame (
+                *apvts.getRawParameterValue ("sweepPosition"),
+                aliasingDetection.getLiveDifferentialDb().data(),
+                aliasingDetection.getNumBins());
+    }
     else if (activeIndex == (int) AnalysisMode::IMDMeasurement)
+    {
         imdMeasurement.update (preSpectrumDb  .data(), postSpectrumDb  .data(),
                                preSpectrumDb_R.data(), postSpectrumDb_R.data());
+
+        // In-mode sweep capture: while Capture is armed, bucket IMD% and
+        // the per-product differential row by sweepPosition.
+        const float vL = imdMeasurement.isValid (IMDMeasurement::Channel::L)
+            ? imdMeasurement.getTotalImdPercent (IMDMeasurement::Channel::L)
+            : SweepCurve::kNoData;
+        const float vR = imdMeasurement.isValid (IMDMeasurement::Channel::R)
+            ? imdMeasurement.getTotalImdPercent (IMDMeasurement::Channel::R)
+            : SweepCurve::kNoData;
+
+        float rowL[SweepGrid::kMaxCols];
+        float rowR[SweepGrid::kMaxCols];
+        const int numCols = juce::jmin (imdMeasurement.getNumProducts(),
+                                        (int) SweepGrid::kMaxCols);
+        for (int c = 0; c < numCols; ++c)
+        {
+            rowL[c] = imdMeasurement.getProductRatioDb (IMDMeasurement::Source::Diff,
+                                                        c, IMDMeasurement::Channel::L);
+            rowR[c] = imdMeasurement.getProductRatioDb (IMDMeasurement::Source::Diff,
+                                                        c, IMDMeasurement::Channel::R);
+        }
+        recordSweepFrame (vL, vR, rowL, rowR, numCols);
+    }
     else if (activeIndex == (int) AnalysisMode::StereoImage)
         stereoAnalysis.update (preSpectrumDb  .data(), preSpectrumDb_R.data(),
                                postSpectrumDb .data(), postSpectrumDb_R.data(),
                                postComplexL.data(), postComplexR.data());
-    else if (activeIndex == (int) AnalysisMode::ParameterSweep)
-    {
-        // Parameter Sweep runs the selected headline-metric analysis and,
-        // while capture is armed, records its per-channel scalar bucketed
-        // by sweepPosition. Switching metric clears the curve (THD% and
-        // IMD% are different units).
-        const int metric = (int) *apvts.getRawParameterValue ("sweepMetric");
-        if (metric != lastSweepMetric)
-        {
-            sweepCurve.reset();
-            sweepGrid .reset();
-            lastSweepMetric = metric;
-        }
-
-        float vL = SweepCurve::kNoData;
-        float vR = SweepCurve::kNoData;
-
-        // Heatmap row: the metric's full per-harmonic / per-product
-        // differential dB distribution for this frame, per channel.
-        float rowL[SweepGrid::kMaxCols];
-        float rowR[SweepGrid::kMaxCols];
-        int   numCols = 0;
-
-        if (metric == 0)   // THD%
-        {
-            thdMeasurement.update (preSpectrumDb  .data(), postSpectrumDb  .data(),
-                                   preSpectrumDb_R.data(), postSpectrumDb_R.data());
-            if (thdMeasurement.isValid (THDMeasurement::Channel::L))
-                vL = thdMeasurement.getTotalThdPercent (THDMeasurement::Channel::L);
-            if (thdMeasurement.isValid (THDMeasurement::Channel::R))
-                vR = thdMeasurement.getTotalThdPercent (THDMeasurement::Channel::R);
-
-            // Harmonics 2..16 - the distortion harmonics (1 is the
-            // fundamental). 15 columns.
-            numCols = 15;
-            for (int c = 0; c < numCols; ++c)
-            {
-                rowL[c] = thdMeasurement.getHarmonicRatioDb (THDMeasurement::Source::Diff,
-                                                             c + 2, THDMeasurement::Channel::L);
-                rowR[c] = thdMeasurement.getHarmonicRatioDb (THDMeasurement::Source::Diff,
-                                                             c + 2, THDMeasurement::Channel::R);
-            }
-        }
-        else               // IMD%
-        {
-            imdMeasurement.update (preSpectrumDb  .data(), postSpectrumDb  .data(),
-                                   preSpectrumDb_R.data(), postSpectrumDb_R.data());
-            if (imdMeasurement.isValid (IMDMeasurement::Channel::L))
-                vL = imdMeasurement.getTotalImdPercent (IMDMeasurement::Channel::L);
-            if (imdMeasurement.isValid (IMDMeasurement::Channel::R))
-                vR = imdMeasurement.getTotalImdPercent (IMDMeasurement::Channel::R);
-
-            numCols = imdMeasurement.getNumProducts();
-            for (int c = 0; c < numCols && c < SweepGrid::kMaxCols; ++c)
-            {
-                rowL[c] = imdMeasurement.getProductRatioDb (IMDMeasurement::Source::Diff,
-                                                            c, IMDMeasurement::Channel::L);
-                rowR[c] = imdMeasurement.getProductRatioDb (IMDMeasurement::Source::Diff,
-                                                            c, IMDMeasurement::Channel::R);
-            }
-        }
-
-        const bool  armed    = *apvts.getRawParameterValue ("sweepCaptureActive") > 0.5f;
-        const float position = *apvts.getRawParameterValue ("sweepPosition");
-
-        // A fresh sweep pass begins on any of: arming capture, the
-        // transport starting, or the sweep position snapping backward
-        // (a loop wrap or replay). Skip a brief warm-up past each
-        // boundary so the settling transient (an FFT window straddling
-        // silence, or the previous extreme) does not land in a bucket
-        // and hijack the display's Y auto-range. The snap-back test
-        // catches looped playback, where the transport reports no play
-        // rising edge.
-        //
-        // Kept to the physical minimum - two full FFT-window refreshes -
-        // so it eats as little of the start-of-sweep region as possible.
-        // The window straddle means the extremes still cannot be read
-        // cleanly from a ramped sweep regardless; the user holds the
-        // automation briefly at each extreme to measure them (mode help).
-        constexpr int   kSweepWarmupFrames =
-            2 * (kSpectrumFftSize / kSpectrumHopSize);
-        constexpr float kPassSnapBack = 0.15f;
-        const bool armRising   = armed && ! sweepCaptureWasArmed;
-        const bool playRising  = transportPlaying && ! sweepTransportWasPlaying;
-        const bool snappedBack = (sweepLastPosition - position) > kPassSnapBack;
-        if (armRising || playRising || snappedBack)
-            sweepCaptureWarmup = kSweepWarmupFrames;
-
-        sweepCaptureWasArmed     = armed;
-        sweepTransportWasPlaying = transportPlaying;
-        sweepLastPosition        = position;
-
-        // Capture only while armed AND the transport is playing, so an
-        // armed-but-stopped plugin does not dump idle readings into a
-        // bucket.
-        if (sweepCaptureWarmup > 0)
-        {
-            --sweepCaptureWarmup;
-        }
-        else if (armed && transportPlaying
-                 && (vL != SweepCurve::kNoData || vR != SweepCurve::kNoData))
-        {
-            sweepCurve.captureFrame (position, vL, vR);
-            sweepGrid .captureFrame (position, rowL, rowR, numCols);
-        }
-    }
     else if (activeIndex == (int) AnalysisMode::PhaseResponse)
     {
         phaseResponse.update (preSpectrumDb.data(),  preSpectrumDb_R.data(),
                               preComplexL.data(),    preComplexR.data(),
                               postComplexL.data(),   postComplexR.data());
+
+        // In-mode sweep capture: bucket the detrended phase curve by
+        // sweepPosition while Capture is armed.
+        if (*apvts.getRawParameterValue ("sweepCaptureActive") > 0.5f)
+            sweepCapture.captureFrame (
+                *apvts.getRawParameterValue ("sweepPosition"),
+                phaseResponse.getPhaseDegrees (PhaseResponse::Channel::L).data(),
+                phaseResponse.getNumBins());
     }
 
     spectrumFrameCount.fetch_add (1, std::memory_order_release);
+}
+
+void WTAnalyzerAudioProcessor::recordSweepFrame (float valueL, float valueR,
+                                                 const float* rowL, const float* rowR,
+                                                 int numCols)
+{
+    const bool  armed    = *apvts.getRawParameterValue ("sweepCaptureActive") > 0.5f;
+    const float position = *apvts.getRawParameterValue ("sweepPosition");
+
+    // A fresh sweep pass begins on any of: arming Capture, the transport
+    // starting, or the sweep position snapping backward (a loop wrap or
+    // replay). Skip a brief warm-up past each boundary so the settling
+    // transient - an FFT window straddling silence, or the previous
+    // extreme - does not land in a bucket and hijack the display's Y
+    // auto-range. Two full FFT-window refreshes is the physical minimum.
+    constexpr int   kSweepWarmupFrames = 2 * (kSpectrumFftSize / kSpectrumHopSize);
+    constexpr float kPassSnapBack      = 0.15f;
+    const bool armRising   = armed && ! sweepCaptureWasArmed;
+    const bool playRising  = transportPlaying && ! sweepTransportWasPlaying;
+    const bool snappedBack = (sweepLastPosition - position) > kPassSnapBack;
+    if (armRising || playRising || snappedBack)
+        sweepCaptureWarmup = kSweepWarmupFrames;
+
+    sweepCaptureWasArmed     = armed;
+    sweepTransportWasPlaying = transportPlaying;
+    sweepLastPosition        = position;
+
+    // Capture only while armed AND the transport is playing, so an
+    // armed-but-stopped plugin does not dump idle readings into a bucket.
+    if (sweepCaptureWarmup > 0)
+    {
+        --sweepCaptureWarmup;
+    }
+    else if (armed && transportPlaying
+             && (valueL != SweepCurve::kNoData || valueR != SweepCurve::kNoData))
+    {
+        sweepCurve.captureFrame (position, valueL, valueR);
+        sweepGrid .captureFrame (position, rowL, rowR, numCols);
+    }
 }
 
 int WTAnalyzerAudioProcessor::computeCrossCorrelationFromScratch()

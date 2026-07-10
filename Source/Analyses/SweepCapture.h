@@ -2,18 +2,16 @@
   ==============================================================================
 
     SweepCapture.h
-    Records analysis output across a sweep dimension (wavetable position,
-    drive amount, filter cutoff, ...) to produce 2D plots that reveal how
-    a device responds across signal-character or parameter axes - the
-    differentiating capability the WTAnalyzer / WTSynth pairing was
-    designed around.
+    Records analysis output across a sweep dimension (drive amount,
+    filter cutoff, an expression parameter, ...) to produce 2D plots
+    that reveal how a device responds across a parameter axis - a
+    differentiating capability of the WTGenerator / WTAnalyzer pairing.
 
     The user drives this via a single APVTS parameter (`sweepPosition`,
     0..1) that they automate from the DAW alongside whatever parameter
-    they're sweeping in the source plugin (typically WTSynth's WT Pos).
-    WTAnalyzer captures the current analysis output (e.g., the
-    FrequencyResponse trace) at the current sweep position, bucketed
-    along the 0..1 axis.
+    they are sweeping in WTGenerator. WTAnalyzer captures the current
+    analysis output (e.g., the FrequencyResponse trace) at the current
+    sweep position, bucketed along the 0..1 axis.
 
     For v1 this records FrequencyResponse output only - one row of N
     frequency bins per sweep-position bucket. Other analyses can plug
@@ -33,8 +31,8 @@ class SweepCapture
 {
 public:
     // X-axis resolution along the sweep dimension. 128 buckets gives
-    // sub-degree resolution when WT Pos automation runs across a typical
-    // 5-10 second sweep, with the heatmap remaining cheap to render and
+    // fine resolution when the swept parameter's automation runs across a
+    // typical 5-10 second sweep, with the heatmap remaining cheap to render and
     // fitting in well under a megabyte for the 2048-bin case.
     static constexpr int kPositionBuckets = 128;
 

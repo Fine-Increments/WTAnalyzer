@@ -4,11 +4,11 @@
     MlsDisplay.h
     UI for MlsIR. A capture-and-correlate workflow, presented like FarinaDisplay:
 
-      - Header: status readout on the left, sweep/order summary on the right,
-        Export button on the far right.
-      - Bottom of the header: Order and Tail sliders (APVTS-backed).
-      - Plot: the recovered impulse response - linear time on X, linear
-        amplitude on Y, scaled to the IR peak.
+      - Header: status readout on the left, order/period summary on the right,
+        Export button on the far right; Order and Tail sliders below.
+      - View-selector band: Waveform / CSD Heatmap / CSD 3D (the shared
+        `irView` parameter, same as the other IR modes).
+      - Plot: the recovered impulse response, or the CSD sub-view.
 
     Visible only when activeAnalysis is MLS IR.
 
@@ -19,6 +19,7 @@
 
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
+#include "CSDView.h"
 
 class MlsDisplay  : public juce::Component,
                     private juce::Timer
@@ -40,10 +41,18 @@ private:
 
     void drawWaveform (juce::Graphics& g, juce::Rectangle<int> plotArea);
     juce::String statusText() const;
+    void syncViewButtons();
     void exportIRToWav();
 
     WTAnalyzerAudioProcessor& processor;
     float uiScale = 1.0f;
+
+    // Waveform / CSD Heatmap / CSD 3D selector, backed by the shared
+    // `irView` APVTS parameter.
+    juce::TextButton waveformButton   { "Waveform" };
+    juce::TextButton csdHeatmapButton { "Heatmap"  };
+    juce::TextButton csd3DButton      { "3D"       };
+    CSDView          csdView;
 
     juce::Slider orderSlider;
     juce::Slider tailSlider;
