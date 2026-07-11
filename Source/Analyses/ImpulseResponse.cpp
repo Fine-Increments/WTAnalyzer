@@ -40,18 +40,23 @@ void ImpulseResponse::resetChannel (ChannelState& ch)
     ch.completedCaptures  .store (0, std::memory_order_relaxed);
     ch.displayLengthAtomic.store (0, std::memory_order_relaxed);
 
-    std::fill (ch.capture .begin(), ch.capture .end(), 0.0f);
-    std::fill (ch.averaged.begin(), ch.averaged.end(), 0.0f);
+    // No buffer memset: completedCaptures == 0 hides any stale contents from
+    // the display, and the first capture after reset folds in with invNext == 1
+    // (avg' = capture), fully overwriting the active window. Zeroing the
+    // full maxWindowSamples buffers here would be a multi-MB memset on the
+    // audio thread (this runs from the mode-change path in processBlock).
 }
 
 void ImpulseResponse::invalidateChannel (ChannelState& ch)
 {
+    // Same rationale as resetChannel - no memset. Called from setWindowMs,
+    // which is polled every processBlock (audio thread); a full-buffer fill
+    // here on every window-slider change would guarantee an xrun.
     ch.state               = State::Idle;
     ch.captureIdx          = 0;
     ch.sinceLastCompletion = std::numeric_limits<int>::max() / 2;
     ch.completedCaptures  .store (0, std::memory_order_relaxed);
     ch.displayLengthAtomic.store (0, std::memory_order_relaxed);
-    std::fill (ch.averaged.begin(), ch.averaged.end(), 0.0f);
 }
 
 void ImpulseResponse::reset()
@@ -67,10 +72,9 @@ void ImpulseResponse::setWindowMs (int ms)
     const int newWin  = std::min (samples, maxWindowSamples);
 
     // CRITICAL: skip the reset path entirely when nothing changed. This
-    // function gets polled every processBlock so an unconditional reset
-    // would re-zero both per-channel averaged buffers (~23 MB each at
-    // 48 kHz / 120 s) hundreds of times per second and burn the audio
-    // thread.
+    // function gets polled every processBlock, so doing work on every call
+    // would burn the audio thread. (invalidateChannel no longer memsets, but
+    // the early-out is still the right hygiene.)
     if (newWin == windowSamples.load (std::memory_order_relaxed))
         return;
 
@@ -91,6 +95,14 @@ void ImpulseResponse::setAverageGoal (int count)
 
 void ImpulseResponse::processSample (float preL, float postL, float preR, float postR)
 {
+    // Consume a deferred UI Clear on the audio thread, where it is the only
+    // writer of the channel state (no race with processChannel below).
+    if (clearRequested.load (std::memory_order_relaxed))
+    {
+        clearRequested.store (false, std::memory_order_relaxed);
+        reset();
+    }
+
     const int winSamps = windowSamples.load (std::memory_order_relaxed);
     if (winSamps <= 0) return;
 

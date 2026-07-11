@@ -62,6 +62,11 @@ public:
     void setWindowMs    (int ms);
     void setAverageGoal (int count);
 
+    // UI-thread Clear. Defers the actual reset to the audio thread (consumed at
+    // the top of processSample) so it never races processChannel's non-atomic
+    // state/index members. Do not call reset() directly from the message thread.
+    void requestClear() noexcept { clearRequested.store (true, std::memory_order_relaxed); }
+
     // Audio-thread entry. Called per-sample with the pre and post values
     // at this sample index for each channel. Pre is used for trigger
     // detection; post is what gets captured.
@@ -112,8 +117,9 @@ private:
     ChannelState chL;
     ChannelState chR;
 
-    std::atomic<int> windowSamples { 0 };
-    std::atomic<int> averageGoal   { kDefaultAverages };
+    std::atomic<int>  windowSamples  { 0 };
+    std::atomic<int>  averageGoal    { kDefaultAverages };
+    std::atomic<bool> clearRequested { false };
 
     void resetChannel  (ChannelState& ch);
     void invalidateChannel (ChannelState& ch);

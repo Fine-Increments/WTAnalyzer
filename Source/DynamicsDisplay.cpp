@@ -34,7 +34,7 @@ DynamicsDisplay::DynamicsDisplay (WTAnalyzerAudioProcessor& proc)
     setOpaque (true);
 
     addAndMakeVisible (clearButton);
-    clearButton.onClick = [this] { processor.dynamicsCurve.reset(); };
+    clearButton.onClick = [this] { processor.dynamicsCurve.requestClear(); };   // deferred to the audio thread
 
     startTimerHz (30);
 }

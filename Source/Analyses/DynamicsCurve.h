@@ -43,7 +43,15 @@ public:
     // Sentinel for a bin with no captured output value.
     static constexpr float kNoData = -1.0e9f;
 
+    // Audio-thread reset. Called from the mode-change path in processBlock and,
+    // deferred, from the UI Clear (see requestClear). Do not call directly from
+    // the message thread - it would race captureFrame's non-atomic accumulators
+    // and could tear a bin count to zero mid-divide (NaN/inf points).
     void reset();
+
+    // UI-thread Clear. Defers reset to the audio thread (consumed at the top of
+    // captureFrame) so it never races the accumulators.
+    void requestClear() noexcept { clearRequested.store (true, std::memory_order_relaxed); }
 
     // Audio-thread entry. Per-block pre/post RMS levels in dB. A channel
     // whose input level falls outside [kMinInputDb, kMaxInputDb] is
@@ -80,5 +88,6 @@ private:
     // One flag per bin so the UI can skip unrendered bins. Atomic for the
     // audio-thread write / UI-thread read handoff.
     std::array<std::atomic<bool>, kNumBins> binHasData {};
-    std::atomic<int> filledBins { 0 };
+    std::atomic<int>  filledBins     { 0 };
+    std::atomic<bool> clearRequested { false };
 };

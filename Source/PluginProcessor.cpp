@@ -425,7 +425,13 @@ void WTAnalyzerAudioProcessor::runSpectrumFft()
 
         spectrumFft.performRealOnlyForwardTransform (spectrumScratch.data(), true);
 
-        constexpr float normFactor = 4.0f / (float) kSpectrumFftSize;
+        // Magnitude normalization. The Hann window is constructed with
+        // normalise = true (juce::dsp::WindowingFunction default), which scales
+        // it to mean 1.0 - that already applies the Hann coherent-gain (x2)
+        // correction. So the FFT scaling is just 2/N (one-sided real spectrum),
+        // NOT 4/N: 4/N double-applies the window correction and reads every
+        // absolute level +6.02 dB high. A full-scale on-bin sine now reads 0 dBFS.
+        constexpr float normFactor = 2.0f / (float) kSpectrumFftSize;
         for (int bin = 0; bin < kSpectrumBins; ++bin)
         {
             const float re = spectrumScratch[2 * bin];

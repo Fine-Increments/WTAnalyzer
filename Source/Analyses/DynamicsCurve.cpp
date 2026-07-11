@@ -45,6 +45,14 @@ float DynamicsCurve::binInputDb (int bin) noexcept
 void DynamicsCurve::captureFrame (float preDbL, float postDbL,
                                   float preDbR, float postDbR)
 {
+    // Consume a deferred UI Clear on the audio thread, where captureFrame is
+    // the only writer of the accumulators (no tear, no divide-by-zeroed-count).
+    if (clearRequested.load (std::memory_order_relaxed))
+    {
+        clearRequested.store (false, std::memory_order_relaxed);
+        reset();
+    }
+
     // Fold each channel into the bin its input level lands in. The
     // output level is stored raw (no clamp) so a gate driving its
     // output toward silence still reads a real measurement; the

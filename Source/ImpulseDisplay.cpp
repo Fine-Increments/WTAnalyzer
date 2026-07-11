@@ -42,7 +42,7 @@ ImpulseDisplay::ImpulseDisplay (WTAnalyzerAudioProcessor& proc)
     addAndMakeVisible (clearButton);
     clearButton.onClick = [this]
     {
-        processor.impulseResponse.reset();
+        processor.impulseResponse.requestClear();   // deferred to the audio thread
         repaint();
     };
 
