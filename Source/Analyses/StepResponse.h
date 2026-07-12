@@ -63,6 +63,10 @@ public:
 
     void requestCapture();   // Arms both channels.
 
+    // UI-thread Clear, deferred to the audio thread (consumed in processSample)
+    // so it never races processChannel's non-atomic capture buffers.
+    void requestClear() noexcept { clearRequested.store (true, std::memory_order_relaxed); }
+
     void processSample (float preL, float postL, float preR, float postR);
 
     // Message-thread entry. Call from a Timer; derives the metrics for any
@@ -139,5 +143,6 @@ private:
 
     float windowMs = kDefaultWindowMs;
 
-    std::atomic<int> responseGeneration { 0 };
+    std::atomic<int>  responseGeneration { 0 };
+    std::atomic<bool> clearRequested     { false };
 };

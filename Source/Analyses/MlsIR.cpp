@@ -73,13 +73,14 @@ void MlsIR::ensureCapacity (int captureSamples)
 
 void MlsIR::resetChannel (ChannelState& ch)
 {
+    // No buffer memset (see FarinaIR::resetChannel): the atomics gate the
+    // display and the buffers are rewritten by the next capture, so skipping
+    // the fill keeps this cheap enough to run on the audio thread via the
+    // deferred Clear and the mode-change path.
     ch.state          .store (State::Idle, std::memory_order_release);
     ch.captureProgress.store (0, std::memory_order_relaxed);
     ch.captureLength  .store (0, std::memory_order_relaxed);
     ch.irLength       .store (0, std::memory_order_relaxed);
-    std::fill (ch.preCapture .begin(), ch.preCapture .end(), 0.0f);
-    std::fill (ch.postCapture.begin(), ch.postCapture.end(), 0.0f);
-    std::fill (ch.ir         .begin(), ch.ir         .end(), 0.0f);
 }
 
 void MlsIR::reset()
@@ -119,6 +120,12 @@ void MlsIR::requestCapture()
 
 void MlsIR::processSample (float preL, float postL, float preR, float postR)
 {
+    if (clearRequested.load (std::memory_order_relaxed))
+    {
+        clearRequested.store (false, std::memory_order_relaxed);
+        reset();
+    }
+
     processChannel (chL, preL, postL);
     processChannel (chR, preR, postR);
 }

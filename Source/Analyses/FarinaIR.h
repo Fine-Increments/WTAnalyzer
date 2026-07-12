@@ -102,6 +102,10 @@ public:
 
     void requestCapture();   // Arms both channels' triggers.
 
+    // UI-thread Clear. Deferred to the audio thread (consumed in processSample)
+    // so it never races processChannel's non-atomic capture buffers / cursor.
+    void requestClear() noexcept { clearRequested.store (true, std::memory_order_relaxed); }
+
     // Audio-thread entry. Called per sample with the current pre and post
     // values for each channel. Each channel runs its own trigger
     // detection and capture; both share the deconvolution FFT scratch on
@@ -160,6 +164,14 @@ private:
         std::atomic<int>   captureProgress { 0 };
         std::atomic<int>   captureLength   { 0 };
         std::atomic<int>   irLength        { 0 };
+
+        // Sweep parameters snapshotted when this channel was armed, so the
+        // deconvolution uses the geometry the capture was actually recorded
+        // with even if the user changes the sweep controls mid-capture.
+        float capF0Hz    = kDefaultF0Hz;
+        float capF1Hz    = kDefaultF1Hz;
+        float capSweepSec = kDefaultSweepSec;
+        float capTailSec  = kDefaultTailSec;
     };
 
     void generateInverseSweep (std::vector<float>& out,
@@ -192,5 +204,6 @@ private:
     float sweepDurationSec = kDefaultSweepSec;
     float tailSec          = kDefaultTailSec;
 
-    std::atomic<int> irGeneration { 0 };
+    std::atomic<int>  irGeneration   { 0 };
+    std::atomic<bool> clearRequested { false };
 };

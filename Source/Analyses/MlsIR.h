@@ -78,6 +78,10 @@ public:
 
     void requestCapture();   // Arms both channels.
 
+    // UI-thread Clear, deferred to the audio thread (consumed in processSample)
+    // so it never races processChannel's non-atomic capture buffers.
+    void requestClear() noexcept { clearRequested.store (true, std::memory_order_relaxed); }
+
     // Audio-thread entry - per sample, current pre/post for each channel.
     void processSample (float preL, float postL, float preR, float postR);
 
@@ -149,5 +153,6 @@ private:
     int   order   = kDefaultOrder;
     float tailSec = kDefaultTailSec;
 
-    std::atomic<int> irGeneration { 0 };
+    std::atomic<int>  irGeneration   { 0 };
+    std::atomic<bool> clearRequested { false };
 };

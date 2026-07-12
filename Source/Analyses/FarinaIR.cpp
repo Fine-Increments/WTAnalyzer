@@ -77,14 +77,17 @@ void FarinaIR::ensureCapacity (int captureSamples, int filterSamples, int preRol
 
 void FarinaIR::resetChannel (ChannelState& ch)
 {
+    // No buffer memset: irLength / captureProgress == 0 hide any stale contents
+    // from the display, preRoll is refilled by armChannel, and postCapture / ir
+    // are fully rewritten by the next capture + deconvolution. Skipping the fill
+    // keeps this cheap enough to run on the audio thread (the deferred Clear and
+    // the mode-change path both call it there) - the capture buffers can be
+    // multi-million samples, so a fill here would be an xrun.
     ch.state          .store (State::Idle, std::memory_order_release);
     ch.captureProgress.store (0, std::memory_order_relaxed);
     ch.captureLength  .store (0, std::memory_order_relaxed);
     ch.irLength       .store (0, std::memory_order_relaxed);
     ch.preRollWrite = 0;
-    std::fill (ch.preRoll    .begin(), ch.preRoll    .end(), 0.0f);
-    std::fill (ch.postCapture.begin(), ch.postCapture.end(), 0.0f);
-    std::fill (ch.ir         .begin(), ch.ir         .end(), 0.0f);
 }
 
 void FarinaIR::reset()
@@ -121,6 +124,13 @@ void FarinaIR::requestCapture()
 
     auto armChannel = [&] (ChannelState& ch)
     {
+        // Snapshot the parameters this capture is recorded with, so the
+        // deconvolution stays matched even if the controls move mid-capture.
+        ch.capF0Hz    = f0Hz;
+        ch.capF1Hz    = f1Hz;
+        ch.capSweepSec = sweepDurationSec;
+        ch.capTailSec  = tailSec;
+
         ch.captureLength  .store (total, std::memory_order_relaxed);
         ch.captureProgress.store (0,     std::memory_order_relaxed);
         ch.irLength       .store (0,     std::memory_order_relaxed);
@@ -134,6 +144,14 @@ void FarinaIR::requestCapture()
 
 void FarinaIR::processSample (float preL, float postL, float preR, float postR)
 {
+    // Consume a deferred UI Clear on the audio thread (sole writer of the
+    // capture state here), so it can't race processChannel below.
+    if (clearRequested.load (std::memory_order_relaxed))
+    {
+        clearRequested.store (false, std::memory_order_relaxed);
+        reset();
+    }
+
     processChannel (chL, preL, postL);
     processChannel (chR, preR, postR);
 }
@@ -238,14 +256,17 @@ void FarinaIR::generateInverseSweep (std::vector<float>& out,
 
 void FarinaIR::runDeconvolution (ChannelState& ch)
 {
+    // Use the parameters snapshotted when this channel was armed, not the live
+    // members - the user may have moved the sweep controls since Capture, and
+    // the deconvolution geometry must match what was actually recorded.
     const int captureSamples = ch.captureLength.load (std::memory_order_relaxed);
-    const int sweepSamples   = (int) std::ceil (sweepDurationSec * sampleRate);
-    const int tailSamples    = (int) std::ceil (tailSec          * sampleRate);
+    const int sweepSamples   = (int) std::ceil (ch.capSweepSec * sampleRate);
+    const int tailSamples    = (int) std::ceil (ch.capTailSec  * sampleRate);
 
     if (captureSamples <= 0 || sweepSamples <= 0 || tailSamples <= 0)
         return;
 
-    generateInverseSweep (inverseSweep, f0Hz, f1Hz, sweepDurationSec);
+    generateInverseSweep (inverseSweep, ch.capF0Hz, ch.capF1Hz, ch.capSweepSec);
 
     std::fill (postScratch.begin(), postScratch.end(), 0.0f);
     for (int i = 0; i < captureSamples && i < fftSize; ++i)
@@ -284,9 +305,9 @@ void FarinaIR::runDeconvolution (ChannelState& ch)
     // 2nd-harmonic IR, which sits sweepDuration*ln(2)/ln(f1/f0) earlier. For
     // multi-second sweeps that gap is seconds wide and the cap never binds;
     // it only matters for unusually short sweeps.
-    const float harmonicGap = sweepDurationSec
+    const float harmonicGap = ch.capSweepSec
                             * std::log (2.0f)
-                            / std::log (juce::jmax (1.001f, f1Hz / f0Hz))
+                            / std::log (juce::jmax (1.001f, ch.capF1Hz / ch.capF0Hz))
                             * sampleRate;
     const int searchW = juce::jmax (1, (int) std::ceil (
                             juce::jmin (kIRSearchSec * sampleRate,

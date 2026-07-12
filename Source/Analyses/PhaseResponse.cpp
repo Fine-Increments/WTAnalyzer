@@ -156,17 +156,34 @@ void PhaseResponse::updateChannel (ChannelState& c, const float* preDb,
         return;
     }
 
-    // ---- 3. Unwrap phase across [lo, hi] ------------------------------
-    float prevWrapped = std::atan2 (c.crossIm[(size_t) lo], c.crossRe[(size_t) lo]);
-    float acc = prevWrapped;
-    c.unwrapped[(size_t) lo] = acc;
-    for (int i = lo + 1; i <= hi; ++i)
+    // ---- 3. Unwrap phase across contiguous valid runs -----------------
+    // Fold deltas only between ADJACENT valid bins. A gap (the silent bins
+    // between tones of a two-tone / multisine input) resets the seed, so the
+    // unwrap never random-walks across silence on stale cross-spectrum values -
+    // which previously injected a bogus phase step at every gap. Gap bins are
+    // left at kNoMeasurement so the group-delay stencil below can refuse to
+    // span them. A single contiguous sweep is one run and unwraps as before.
+    std::fill (c.unwrapped.begin(), c.unwrapped.end(), kNoMeasurement);
+    bool  haveSeed    = false;
+    float acc         = 0.0f;
+    float prevWrapped = 0.0f;
+    for (int i = lo; i <= hi; ++i)
     {
+        if (! valid (i)) { haveSeed = false; continue; }
+
         const float ph = std::atan2 (c.crossIm[(size_t) i], c.crossRe[(size_t) i]);
-        float d = ph - prevWrapped;
-        while (d >  kPi) d -= kTwoPi;
-        while (d < -kPi) d += kTwoPi;
-        acc += d;
+        if (! haveSeed)
+        {
+            acc      = ph;
+            haveSeed = true;
+        }
+        else
+        {
+            float d = ph - prevWrapped;
+            while (d >  kPi) d -= kTwoPi;
+            while (d < -kPi) d += kTwoPi;
+            acc += d;
+        }
         c.unwrapped[(size_t) i] = acc;
         prevWrapped = ph;
     }
@@ -179,6 +196,14 @@ void PhaseResponse::updateChannel (ChannelState& c, const float* preDb,
         const int a = std::max (lo, i - kGroupDelaySpan);
         const int b = std::min (hi, i + kGroupDelaySpan);
         if (b <= a) continue;
+
+        // The centred difference must not straddle a gap: require the whole
+        // [a, b] span to be valid, or the phase delta crosses a discontinuity
+        // between two independently-seeded runs and the delay reads garbage.
+        bool spanValid = true;
+        for (int k = a; k <= b && spanValid; ++k)
+            if (! valid (k)) spanValid = false;
+        if (! spanValid) continue;
 
         const float dPhase = c.unwrapped[(size_t) b] - c.unwrapped[(size_t) a];
         const float dOmega = kTwoPi * binFreqScale * (float) (b - a);

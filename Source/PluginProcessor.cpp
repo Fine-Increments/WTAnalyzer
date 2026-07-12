@@ -327,6 +327,10 @@ void WTAnalyzerAudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
     preDelayLine.setMaximumDelayInSamples (kMaxDelaySamples);
     preDelayLine.reset();
 
+    peakHoldSamples = (int) std::ceil (0.05 * sampleRate);   // ~50 ms peak hold
+    peakHoldCounter = 0;
+    peakHoldPostL = peakHoldPostR = peakHoldPreL = peakHoldPreR = -100.0f;
+
     xcorrPreRing.fill (0.0f);
     xcorrPostRing.fill (0.0f);
     xcorrRingPos = 0;
@@ -671,11 +675,16 @@ int WTAnalyzerAudioProcessor::computeCrossCorrelationFromScratch()
 
     // Peak in non-negative lags [0, kXcorrMaxLag) is the offset by which
     // post lags pre - i.e. the amount we need to delay pre to align.
+    // Normalize each lag by its overlap sample count (kXcorrSignalLen - lag).
+    // The raw cross-correlation sum shrinks linearly with the overlap, which
+    // biases the peak toward lag 0; dividing by the overlap removes that
+    // triangular weighting. The divisor is always >= kXcorrSignalLen - kXcorrMaxLag
+    // (= 16384), so there is no small-denominator blow-up.
     int   peakLag = 0;
     float peakMag = 0.0f;
     for (int lag = 0; lag < kXcorrMaxLag; ++lag)
     {
-        const float v = std::abs (xcorrScratchA[lag]);
+        const float v = std::abs (xcorrScratchA[lag]) / (float) (kXcorrSignalLen - lag);
         if (v > peakMag)
         {
             peakMag = v;
@@ -779,32 +788,43 @@ void WTAnalyzerAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     const int postChans = postBus.getNumChannels();
     const int preChans  = preActive ? preBus.getNumChannels() : 0;
 
+    // Peak-hold bookkeeping: release the running peaks every ~50 ms so a
+    // transient between the panel's 30 Hz repaints is caught. holdPeak folds
+    // this block's peak into the held max (or restarts it on a release block)
+    // and publishes it; RMS levels below are published instantaneously.
+    peakHoldCounter += numSamples;
+    const bool releasePeak = peakHoldCounter >= peakHoldSamples;
+    if (releasePeak)
+        peakHoldCounter = 0;
+
+    auto holdPeak = [releasePeak] (std::atomic<float>& out, float& hold, float blockDb)
+    {
+        hold = releasePeak ? blockDb : juce::jmax (hold, blockDb);
+        out.store (hold, std::memory_order_relaxed);
+    };
+
     if (postChans > 0)
     {
         postEffectLevelDb.store (gainToDb (postBus.getRMSLevel  (0, 0, numSamples)),
                                  std::memory_order_relaxed);
-        postEffectPeakDb .store (gainToDb (postBus.getMagnitude (0, 0, numSamples)),
-                                 std::memory_order_relaxed);
+        holdPeak (postEffectPeakDb, peakHoldPostL, gainToDb (postBus.getMagnitude (0, 0, numSamples)));
 
         const int rIdx = postChans > 1 ? 1 : 0;
         postEffectLevelDb_R.store (gainToDb (postBus.getRMSLevel  (rIdx, 0, numSamples)),
                                    std::memory_order_relaxed);
-        postEffectPeakDb_R .store (gainToDb (postBus.getMagnitude (rIdx, 0, numSamples)),
-                                   std::memory_order_relaxed);
+        holdPeak (postEffectPeakDb_R, peakHoldPostR, gainToDb (postBus.getMagnitude (rIdx, 0, numSamples)));
     }
 
     if (preActive)
     {
         preEffectLevelDb.store (gainToDb (preBus.getRMSLevel  (0, 0, numSamples)),
                                 std::memory_order_relaxed);
-        preEffectPeakDb .store (gainToDb (preBus.getMagnitude (0, 0, numSamples)),
-                                std::memory_order_relaxed);
+        holdPeak (preEffectPeakDb, peakHoldPreL, gainToDb (preBus.getMagnitude (0, 0, numSamples)));
 
         const int rIdx = preChans > 1 ? 1 : 0;
         preEffectLevelDb_R.store (gainToDb (preBus.getRMSLevel  (rIdx, 0, numSamples)),
                                   std::memory_order_relaxed);
-        preEffectPeakDb_R .store (gainToDb (preBus.getMagnitude (rIdx, 0, numSamples)),
-                                  std::memory_order_relaxed);
+        holdPeak (preEffectPeakDb_R, peakHoldPreR, gainToDb (preBus.getMagnitude (rIdx, 0, numSamples)));
     }
     else
     {
@@ -812,6 +832,7 @@ void WTAnalyzerAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
         preEffectPeakDb   .store (-100.0f, std::memory_order_relaxed);
         preEffectLevelDb_R.store (-100.0f, std::memory_order_relaxed);
         preEffectPeakDb_R .store (-100.0f, std::memory_order_relaxed);
+        peakHoldPreL = peakHoldPreR = -100.0f;
     }
 
     // Spectrum overlay: stream channel 0 of the (delay-compensated) pre and

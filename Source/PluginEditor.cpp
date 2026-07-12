@@ -152,7 +152,7 @@ WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioP
     addChildComponent (farinaClearButton);
     farinaClearButton.onClick = [this]
     {
-        audioProcessor.farinaIR.reset();
+        audioProcessor.farinaIR.requestClear();   // deferred to the audio thread
         repaint();
     };
 
@@ -167,7 +167,7 @@ WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioP
     addChildComponent (mlsClearButton);
     mlsClearButton.onClick = [this]
     {
-        audioProcessor.mlsIR.reset();
+        audioProcessor.mlsIR.requestClear();   // deferred to the audio thread
         repaint();
     };
 
@@ -180,7 +180,7 @@ WTAnalyzerAudioProcessorEditor::WTAnalyzerAudioProcessorEditor (WTAnalyzerAudioP
     addChildComponent (stepClearButton);
     stepClearButton.onClick = [this]
     {
-        audioProcessor.stepResponse.reset();
+        audioProcessor.stepResponse.requestClear();   // deferred to the audio thread
         repaint();
     };
 

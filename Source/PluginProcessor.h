@@ -86,6 +86,15 @@ public:
     std::atomic<float> postEffectPeakDb_R  { -100.0f };
     std::atomic<bool>  preBusActive        { false };
 
+    // Peak-meter hold (audio-thread private). The published peak is the running
+    // max per meter, released every peakHoldSamples (~50 ms, set in
+    // prepareToPlay) so a transient landing between the panel's ~30 Hz repaints
+    // is not lost. RMS levels stay instantaneous.
+    float peakHoldPostL = -100.0f, peakHoldPostR = -100.0f;
+    float peakHoldPreL  = -100.0f, peakHoldPreR  = -100.0f;
+    int   peakHoldCounter = 0;
+    int   peakHoldSamples = 2400;
+
     // Upper bound on pre-effect delay (samples). At 48 kHz this is ~340 ms,
     // generous for typical effect latencies including lookahead limiters and
     // linear-phase EQ.
@@ -96,14 +105,16 @@ public:
     juce::AudioProcessorValueTreeState apvts;
 
     // Cross-correlation auto-measurement: signal length captured and FFT size.
-    // The signal length must exceed the largest delay we want to measure or
-    // there is no temporal overlap between captured pre and post, and the
-    // correlation peak defaults to 0. 16384-sample window padded to 32768
-    // covers lags up to kMaxDelaySamples (~340 ms at 48 kHz).
-    static constexpr int kXcorrFftOrder  = 15;
-    static constexpr int kXcorrFftSize   = 1 << kXcorrFftOrder;     // 32768
-    static constexpr int kXcorrSignalLen = kXcorrFftSize / 2;       // 16384
-    static constexpr int kXcorrMaxLag    = kXcorrSignalLen;
+    // The signal length must be at least TWICE the largest measurable lag, or
+    // the overlap between captured pre and post collapses toward zero as the
+    // lag approaches the signal length and the correlation peak degrades into
+    // noise. With signal length 32768 and lags searched only up to
+    // kMaxDelaySamples (16384), the overlap stays >= 16384 samples (>= 50%)
+    // across the whole delay range.
+    static constexpr int kXcorrFftOrder  = 16;
+    static constexpr int kXcorrFftSize   = 1 << kXcorrFftOrder;     // 65536
+    static constexpr int kXcorrSignalLen = kXcorrFftSize / 2;       // 32768
+    static constexpr int kXcorrMaxLag    = kMaxDelaySamples;        // 16384 (~340 ms @48k)
 
     // Editor sets to true to request a measurement; audio thread clears it.
     std::atomic<bool> measureLatencyRequested  { false };

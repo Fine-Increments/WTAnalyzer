@@ -159,11 +159,30 @@ void IMDMeasurement::updateChannel (ChannelState& ch,
 
     float diffPower = 0.0f;
 
+    // Track which product bins have already contributed, so a bin is counted
+    // once even when two products resolve to it (e.g. f1+f2 == 3f1-f2 for
+    // certain ratios) - counting twice inflates IMD%.
+    std::array<int, (size_t) kNumProducts> summedBins {};
+    int numSummed = 0;
+
     for (int i = 0; i < kNumProducts; ++i)
     {
         const int bin = ch.productBin[(size_t) i];
         if (bin <= 0 || bin >= numBins)
             continue;   // product folds out of range; skip
+
+        // A product landing on one of the two fundamentals is not IMD - its
+        // level change is the device's gain on that tone; counting it would
+        // misattribute gain as distortion.
+        if (bin == ch.f1Bin || bin == ch.f2Bin)
+            continue;
+
+        bool duplicate = false;
+        for (int k = 0; k < numSummed; ++k)
+            if (summedBins[(size_t) k] == bin) { duplicate = true; break; }
+        if (duplicate)
+            continue;
+        summedBins[(size_t) numSummed++] = bin;
 
         const float preVal  = preDb [bin];
         const float postVal = postDb[bin];

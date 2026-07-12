@@ -56,11 +56,12 @@ void CSD::computeChannel (std::vector<float>& grid, const float* ir, int n, int 
 
     std::vector<float> scratch ((size_t) (2 * kSliceFftSize), 0.0f);
 
-    // Each slice's window starts at the same fractional position across
-    // the in-bounds range, so L and R share one time axis even when their
-    // lengths differ.
-    const int maxStartThis = juce::jmax (0, n    - kSliceFftSize);
-    juce::ignoreUnused (nMax);
+    // Slide both channels over the SHARED (longest-channel) start range, so L
+    // and R genuinely share one time axis and spanMs (derived from nMax) labels
+    // both correctly. Using the per-channel range instead stretched a shorter
+    // channel's decay across the longer channel's axis. A channel shorter than
+    // nMax simply reads zeros past its end (guarded below).
+    const int maxStartThis = juce::jmax (0, nMax - kSliceFftSize);
 
     float peakDb = -1.0e9f;
 

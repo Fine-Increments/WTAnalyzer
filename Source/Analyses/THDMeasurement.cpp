@@ -98,8 +98,31 @@ void THDMeasurement::updateChannel (ChannelState& ch,
     resetSourceData (ch.postData);
     resetSourceData (ch.diffData);
 
-    ch.preData .harmonicDb[0] = preDb [ch.fundamentalBin];
-    ch.postData.harmonicDb[0] = postDb[ch.fundamentalBin];
+    // Sum energy over a small bin cluster around each target rather than
+    // reading the single exact bin. A fundamental that does not land on an
+    // integer bin (e.g. 1 kHz at 48 kHz / 8192 = bin 170.6) spreads its energy
+    // across the Hann main lobe, so a single-bin read under-reports the tone -
+    // and every harmonic - by up to ~1.4 dB, deflating THD%. The cluster half
+    // width is capped at half the harmonic spacing so clusters never overlap
+    // for low fundamentals. Applied identically to fundamental and harmonics,
+    // so the harmonic/fundamental ratio stays exact.
+    const int clusterW = std::max (0, std::min (2, (ch.fundamentalBin - 1) / 2));
+
+    auto clusterDb = [this, clusterW] (const float* db, int centerBin)
+    {
+        const int a = std::max (0, centerBin - clusterW);
+        const int b = std::min (numBins - 1, centerBin + clusterW);
+        double power = 0.0;
+        for (int k = a; k <= b; ++k)
+        {
+            const double amp = std::pow (10.0, (double) db[k] / 20.0);
+            power += amp * amp;
+        }
+        return (float) (10.0 * std::log10 (power + 1.0e-30));
+    };
+
+    ch.preData .harmonicDb[0] = clusterDb (preDb,  ch.fundamentalBin);
+    ch.postData.harmonicDb[0] = clusterDb (postDb, ch.fundamentalBin);
     ch.preFundamentalDb  = ch.preData .harmonicDb[0];
     ch.postFundamentalDb = ch.postData.harmonicDb[0];
     ch.numValidHarmonics = 1;
@@ -110,8 +133,8 @@ void THDMeasurement::updateChannel (ChannelState& ch,
         if (harmonicBin >= numBins)
             break;   // above Nyquist; we're done
 
-        ch.preData .harmonicDb[n - 1] = preDb [harmonicBin];
-        ch.postData.harmonicDb[n - 1] = postDb[harmonicBin];
+        ch.preData .harmonicDb[n - 1] = clusterDb (preDb,  harmonicBin);
+        ch.postData.harmonicDb[n - 1] = clusterDb (postDb, harmonicBin);
         ch.numValidHarmonics = n;
     }
 

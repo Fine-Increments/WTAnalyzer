@@ -49,8 +49,9 @@ void StepResponse::resetChannel (ChannelState& ch)
     ch.responseLength .store (0, std::memory_order_relaxed);
     ch.preRollWrite = 0;
     ch.baseline = ch.settledLevel = ch.riseTimeMs = ch.overshootPct = 0.0f;
-    std::fill (ch.preRoll .begin(), ch.preRoll .end(), 0.0f);
-    std::fill (ch.response.begin(), ch.response.end(), 0.0f);
+    // No buffer memset (see FarinaIR::resetChannel): responseLength == 0 hides
+    // stale contents and the next capture rewrites them; keeps this cheap enough
+    // to run on the audio thread via the deferred Clear / mode-change path.
 }
 
 void StepResponse::reset()
@@ -91,6 +92,12 @@ void StepResponse::requestCapture()
 
 void StepResponse::processSample (float preL, float postL, float preR, float postR)
 {
+    if (clearRequested.load (std::memory_order_relaxed))
+    {
+        clearRequested.store (false, std::memory_order_relaxed);
+        reset();
+    }
+
     processChannel (chL, preL, postL);
     processChannel (chR, preR, postR);
 }
