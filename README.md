@@ -9,7 +9,8 @@ Its companion is **WTGenerator** - a purpose-built test-signal generator that
 emits the clean, reproducible reference signal WTAnalyzer measures against.
 Together they form a self-contained two-plugin DSP test bench that lives in
 any DAW supporting sidechain routing, alongside the effect being developed or
-characterized.
+characterized. See [COORDINATION.md](COORDINATION.md) for the interface
+contract between the two plugins.
 
 WTAnalyzer and WTGenerator are inspired by Shane Dunne's WTSynth - the
 wavetable synth that sparked the idea - but they are a standalone pair and
